@@ -5,6 +5,7 @@ from sqlalchemy import (
     TIMESTAMP, SmallInteger, Boolean, CHAR, Text, JSON,
     UniqueConstraint, Index, CheckConstraint
 )
+from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -18,7 +19,7 @@ class UserType(Base):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
     public_id = Column(CHAR(26), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     first_name = Column(String(120), nullable=False)
@@ -35,7 +36,7 @@ class User(Base):
 
 class UserCredential(Base):
     __tablename__ = "user_credentials"
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     password_hash = Column(String(255), nullable=False)
     password_algo = Column(SAEnum("bcrypt", name="password_algo"), nullable=False, default="bcrypt")
     last_password_change = Column(DateTime)
@@ -45,7 +46,7 @@ class UserCredential(Base):
 class EmailVerification(Base):
     __tablename__ = "email_verifications"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token = Column(CHAR(64), unique=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime)
@@ -54,7 +55,7 @@ class EmailVerification(Base):
 class SessionToken(Base):
     __tablename__ = "sessions"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     refresh_token = Column(CHAR(64), unique=True, nullable=False)
     user_agent = Column(String(255))
     ip_addr = Column(String(45))
@@ -70,7 +71,7 @@ class SessionToken(Base):
 # Organization directory. Both Builders and Communities live here.
 class Organization(Base):
     __tablename__ = "organizations"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
     # e.g., "builder" or "community"
     org_type = Column(SAEnum("builder", "community", name="org_type"), nullable=False, index=True)
 
@@ -97,7 +98,7 @@ class Organization(Base):
 # Builder profile details (one per builder organization)
 class BuilderProfile(Base):
     __tablename__ = "builder_profiles"
-    org_id = Column(BigInteger, ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
+    org_id = Column(MyBIGINT(unsigned=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
     company_name = Column(String(255), nullable=False)
     website_url = Column(String(512))
     company_address = Column(String(255))
@@ -111,7 +112,7 @@ class BuilderProfile(Base):
 # Community profile details (one per community organization)
 class CommunityProfile(Base):
     __tablename__ = "community_profiles"
-    org_id = Column(BigInteger, ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
+    org_id = Column(MyBIGINT(unsigned=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
     community_name = Column(String(255), nullable=False)
     community_address = Column(String(255))
     city = Column(String(120), nullable=False)
@@ -127,8 +128,8 @@ class CommunityProfile(Base):
 class CommunityAdminLink(Base):
     __tablename__ = "community_admin_links"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    org_id = Column(BigInteger, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    org_id = Column(MyBIGINT(unsigned=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     # Pending until proof-of-ownership is checked
     status = Column(SAEnum("pending", "approved", "rejected", name="admin_verify_status"), nullable=False, server_default="pending")
     requested_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
@@ -142,7 +143,7 @@ class CommunityAdminLink(Base):
 # Sales Rep (Realtor) profile (1:1 with user)
 class SalesRepProfile(Base):
     __tablename__ = "sales_rep_profiles"
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
     # Personal / professional
     address = Column(String(255))
@@ -156,12 +157,12 @@ class SalesRepProfile(Base):
     # Company / placement
     company_account_number = Column(String(64))
     office_location = Column(String(255))
-    community_id = Column(BigInteger, ForeignKey("organizations.id", ondelete="SET NULL"))  # optional link to community org
+    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("organizations.id", ondelete="SET NULL"))  # optional link to community org
 
 # Buyer preferences (1:1 with user)
 class BuyerPreferences(Base):
     __tablename__ = "buyer_preferences"
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
     # Personal (duplicated minimally for quick cards; canonical lives in users)
     sex = Column(SAEnum("female", "male", "non_binary", "prefer_not", name="sex_pref"))
@@ -182,7 +183,7 @@ class BuyerPreferences(Base):
 class OnboardingForm(Base):
     __tablename__ = "onboarding_forms"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(SAEnum("user", "builder", "community", "communityAdmin", "salesRep", "buyer", name="onboard_role"), nullable=False)
     payload = Column(JSON, nullable=False)
     status = Column(SAEnum("preview", "committed", name="onboard_status"), nullable=False, server_default="preview")

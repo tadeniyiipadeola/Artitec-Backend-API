@@ -1,14 +1,21 @@
 # src/app.py
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from routes.auth import router as auth_router
 
-# DEV-ONLY: create tables + seed user_types at startup
 from config.db import engine, SessionLocal
 from model.base import Base
 from model.user import UserType
 
+logger = logging.getLogger(__name__)
+
+
 app = FastAPI(title="Artitec API", version="1.0.0")
+logging.basicConfig(level=logging.INFO)
+logger.info("Artitec API starting…")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,6 +27,8 @@ app.add_middleware(
         "http://localhost:8080",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8080",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
       ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,28 +37,62 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["auth"])
 
+
+# --- Exception handlers and security headers ---
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning("Validation error on %s %s: %s", request.method, request.url.path, exc.errors())
+    return JSONResponse(status_code=422, content={
+        "code": "validation_error",
+        "message": "Invalid request",
+        "errors": exc.errors(),
+    })
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    # 4xx/5xx raised intentionally in code
+    level = logging.WARNING if 400 <= exc.status_code < 500 else logging.ERROR
+    logger.log(level, "HTTPException %s on %s %s: %s", exc.status_code, request.method, request.url.path, exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={
+        "code": "http_error",
+        "message": exc.detail,
+    })
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
 # NOTE: FastAPI recommends lifespan context for newer apps; startup event is fine for dev.
 @app.on_event("startup")
 def _startup():
     # Create tables if they don't exist (dev)
     Base.metadata.create_all(engine)
+    logger.info("DB metadata ensured. Seeding user types if missing…")
 
     # Seed user_types if missing (dev)
     db = SessionLocal()
     try:
         codes = {c for (c,) in db.query(UserType.code).all()}
         needed = [
+            ("member", "Member"),
+            ("user", "User"),
             ("homeowner", "Homeowner"),
             ("builder", "Builder"),
+            ("community", "Community"),
             ("community_admin", "Community Admin"),
-            ("admin", "Platform Admin"),
             ("sales_rep", "Sales Rep"),
-            ("pending", "Pending Verification")
+            ("admin", "Platform Admin"),
+            ("pending", "Pending Verification"),
         ]
         for code, display in needed:
             if code not in codes:
                 db.add(UserType(code=code, display_name=display))
         db.commit()
+        logger.info("User types seeded: now present => %s", sorted({c for (c,) in db.query(UserType.code).all()}))
     finally:
         db.close()
 
