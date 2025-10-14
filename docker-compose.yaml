@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  api:
+    image: ghcr.io/<org_or_user>/<repo>/artitec-api:prod
+    container_name: artitec-api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"         # prod on 8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower-prod
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=60
+      - WATCHTOWER_CLEANUP=true
+      - REPO_USER=${GHCR_USERNAME}
+      - REPO_PASS=${GHCR_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped

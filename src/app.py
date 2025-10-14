@@ -12,11 +12,23 @@ app = FastAPI(title="Artitec API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+      ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
 )
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["auth"])
 
+# NOTE: FastAPI recommends lifespan context for newer apps; startup event is fine for dev.
 @app.on_event("startup")
 def _startup():
     # Create tables if they don't exist (dev)
@@ -29,8 +41,10 @@ def _startup():
         needed = [
             ("homeowner", "Homeowner"),
             ("builder", "Builder"),
-            ("hoa_admin", "HOA Admin"),
+            ("community_admin", "Community Admin"),
             ("admin", "Platform Admin"),
+            ("sales_rep", "Sales Rep"),
+            ("pending", "Pending Verification")
         ]
         for code, display in needed:
             if code not in codes:
