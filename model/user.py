@@ -17,10 +17,11 @@ class UserType(Base):
     code = Column(String(32), unique=True, nullable=False)
     display_name = Column(String(64), nullable=False)
 
+import uuid
 class User(Base):
     __tablename__ = "users"
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    public_id = Column(CHAR(26), unique=True, nullable=False)
+    public_id = Column(CHAR(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     email = Column(String(255), unique=True, nullable=False)
     first_name = Column(String(120), nullable=False)
     last_name = Column(String(120), nullable=False)
