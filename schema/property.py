@@ -1,0 +1,105 @@
+
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, HttpUrl, conint, confloat, constr
+
+
+# ---------------------------------------------------------------------------
+# Shared / Base
+# ---------------------------------------------------------------------------
+class PropertyBase(BaseModel):
+    """Fields common to create/update and read.
+
+    Keep this lean—only fields that belong to the Property entity itself.
+    Relationship IDs (builder_id, community_id) live here to allow filtering.
+    """
+
+    title: constr(strip_whitespace=True, min_length=3, max_length=140)
+    description: Optional[constr(strip_whitespace=True, max_length=5000)] = None
+
+    # Address / location
+    address1: constr(strip_whitespace=True, min_length=1, max_length=255)
+    address2: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    city: constr(strip_whitespace=True, min_length=1, max_length=120)
+    state: constr(strip_whitespace=True, min_length=2, max_length=120)
+    postal_code: constr(strip_whitespace=True, min_length=3, max_length=20)
+    latitude: Optional[confloat(ge=-90, le=90)] = Field(default=None)
+    longitude: Optional[confloat(ge=-180, le=180)] = Field(default=None)
+
+    # Specs
+    price: confloat(ge=0)
+    bedrooms: conint(ge=0)
+    bathrooms: confloat(ge=0)
+    sqft: Optional[conint(ge=0)] = None
+    lot_sqft: Optional[conint(ge=0)] = None
+    year_built: Optional[conint(ge=1700, le=datetime.utcnow().year + 1)] = None
+
+    # Associations / flags
+    builder_id: Optional[int] = None
+    community_id: Optional[int] = None
+    has_pool: bool = False
+
+    # Media links (URLs to images/videos hosted elsewhere)
+    media_urls: Optional[List[HttpUrl]] = None
+
+
+# ---------------------------------------------------------------------------
+# Create & Update
+# ---------------------------------------------------------------------------
+class PropertyCreate(PropertyBase):
+    """Incoming payload to create a property.
+
+    Owner is inferred from auth (current user) and not part of this schema.
+    `listed_at` and audit timestamps come from the DB default.
+    """
+
+    pass
+
+
+class PropertyUpdate(BaseModel):
+    """PATCH-friendly: all fields optional; only provided fields are updated."""
+
+    title: Optional[constr(strip_whitespace=True, min_length=3, max_length=140)] = None
+    description: Optional[constr(strip_whitespace=True, max_length=5000)] = None
+
+    address1: Optional[constr(strip_whitespace=True, min_length=1, max_length=255)] = None
+    address2: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    city: Optional[constr(strip_whitespace=True, min_length=1, max_length=120)] = None
+    state: Optional[constr(strip_whitespace=True, min_length=2, max_length=120)] = None
+    postal_code: Optional[constr(strip_whitespace=True, min_length=3, max_length=20)] = None
+    latitude: Optional[confloat(ge=-90, le=90)] = None
+    longitude: Optional[confloat(ge=-180, le=180)] = None
+
+    price: Optional[confloat(ge=0)] = None
+    bedrooms: Optional[conint(ge=0)] = None
+    bathrooms: Optional[confloat(ge=0)] = None
+    sqft: Optional[conint(ge=0)] = None
+    lot_sqft: Optional[conint(ge=0)] = None
+    year_built: Optional[conint(ge=1700, le=datetime.utcnow().year + 1)] = None
+
+    builder_id: Optional[int] = None
+    community_id: Optional[int] = None
+    has_pool: Optional[bool] = None
+
+    media_urls: Optional[List[HttpUrl]] = None
+
+
+# ---------------------------------------------------------------------------
+# Out / Read models
+# ---------------------------------------------------------------------------
+class PropertyOut(PropertyBase):
+    """Response model for a property."""
+
+    id: int
+    owner_id: int
+
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    listed_at: Optional[datetime] = None
+
+    class Config:
+        orm_mode = True

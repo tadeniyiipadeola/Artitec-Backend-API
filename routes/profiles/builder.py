@@ -5,7 +5,7 @@
 Exposes CRUD and list/search endpoints for builder profiles.
 - Path prefix: /v1/profiles/builders
 - Response schemas: Pydantic v2 (schema/builder.py)
-- DB: SQLAlchemy session via core.db.get_db
+- DB: SQLAlchemy session via config.db.get_db
 - Includes: optional eager-load of properties & communities, follower metrics
 
 If an auth dependency is not available yet, `current_user` will be None and
@@ -21,13 +21,13 @@ from sqlalchemy.orm import Session, selectinload
 
 # --- Project imports (adjust if your paths differ) ---------------------------
 try:
-    from core.db import get_db
+    from config.db import get_db
 except Exception as e:  # pragma: no cover
-    raise ImportError("core.db.get_db is required for DB session dependency") from e
+    raise ImportError("config.db.get_db is required for DB session dependency") from e
 
 # Optional auth (graceful fallback to None)
 try:
-    from core.security import get_current_user_optional  # returns User | None
+    from config.security import get_current_user_optional  # returns User | None
 except Exception:  # pragma: no cover
     def get_current_user_optional():  # type: ignore
         return None
