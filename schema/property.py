@@ -103,3 +103,38 @@ class PropertyOut(PropertyBase):
 
     class Config:
         orm_mode = True
+
+
+# ---------------------------------------------------------------------------
+# Linked DTOs / Relations payloads
+# ---------------------------------------------------------------------------
+class LinkedBuilderOut(BaseModel):
+    id: int
+    name: Optional[str] = None
+    public_id: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class LinkedCommunityOut(BaseModel):
+    id: int
+    name: Optional[str] = None
+    public_id: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class PropertyRelationsOut(BaseModel):
+    """Lightweight relations response for a property.
+
+    - primary_builder: from Property.builder_id
+    - builders: many-to-many via builder_portfolio
+    - community: from Property.community_id
+    """
+
+    property_id: int
+    primary_builder: Optional[LinkedBuilderOut] = None
+    builders: List[LinkedBuilderOut] = []
+    community: Optional[LinkedCommunityOut] = None

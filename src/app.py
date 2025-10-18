@@ -5,7 +5,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from routes.auth import router as auth_router
-from routes.profiles import buyers
+from routes.profiles import buyers, builder, community
+from routes.property import property
+
+# Optional routers (import if present)
+try:
+    from routes.social.routes import router as social_router
+except Exception:  # pragma: no cover
+    social_router = None  # type: ignore
+
+try:
+    from routes.property.property import router as property_router
+except Exception:  # pragma: no cover
+    property_router = None  # type: ignore
+
+# Community & Builder modules (route files may vary by your structure)
+try:
+    from routes.profiles.community import router as community_router  # e.g., routes/community.py
+except Exception:  # pragma: no cover
+    community_router = None  # type: ignore
+
+try:
+    from routes.profiles.builder import router as builder_router  # e.g., routes/builder.py
+except Exception:  # pragma: no cover
+    builder_router = None  # type: ignore
+
 
 from config.db import engine, SessionLocal
 from model.base import Base
@@ -36,8 +60,17 @@ app.add_middleware(
     allow_credentials=True,
 )
 
-app.include_router(auth_router, prefix="/v1/auth", tags=["auth"])
-app.include_router(buyers.router, prefix="/v1")
+app.include_router(auth_router, prefix="/v1/auth", tags=["Authentication"])
+app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
+app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
+app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
+app.include_router(property.router, prefix="/v1/properties", tags=["Properties Profiles"])
+
+
+# --- Optional routers (only included if module is available) ---
+if social_router is not None:
+    app.include_router(social_router)  # already has /v1/social prefix inside
+
 
 
 # --- Exception handlers and security headers ---

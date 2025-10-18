@@ -1,116 +1,129 @@
-
-
-"""Community routes (v1)
-
-Exposes CRUD and list/search endpoints for communities, plus a helper route
-for listing active builders in a given community.
-
-- Path prefix: /v1/communities
-- Response schemas: Pydantic v2 (schema/community.py)
-- DB: SQLAlchemy session via core.db.get_db
-- Includes: optional eager-load of builders via `include=builders`
-"""
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Set
+from typing import List, Optional, Set, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-# --- Project imports (adjust if your paths differ) ---------------------------
+from config.db import get_db
+from config.security import get_current_user_optional
+
+# --- SQLAlchemy models -------------------------------------------------------
 try:
-    from core.db import get_db
+    from model.profiles.community import (
+        Community as CommunityModel,
+        CommunityAmenity as AmenityModel,
+        CommunityEvent as EventModel,
+        CommunityBuilder as BuilderCardModel,
+        CommunityAdmin as AdminModel,
+        CommunityAward as AwardModel,
+        CommunityTopic as TopicModel,
+        CommunityPhase as PhaseModel,
+    )
 except Exception as e:  # pragma: no cover
-    raise ImportError("core.db.get_db is required for DB session dependency") from e
+    raise ImportError("Community-related models are missing: model/profiles/community.py") from e
 
-# Optional auth (graceful fallback to None)
-try:
-    from core.security import get_current_user_optional  # returns User | None
-except Exception:  # pragma: no cover
-    def get_current_user_optional():  # type: ignore
-        return None
-
-try:
-    from model.profiles.community import Community as CommunityModel  # SQLAlchemy model
-except Exception as e:  # pragma: no cover
-    raise ImportError("model.profiles.community.Community model not found") from e
-
-try:
-    from model.profiles.builder import Builder as BuilderModel  # for /{id}/builders endpoint
-except Exception as e:  # pragma: no cover
-    raise ImportError("model.profiles.builder.Builder model not found (needed for listing builders)") from e
-
+# --- Pydantic schemas --------------------------------------------------------
 try:
     from schema.community import (
         CommunityOut,
         CommunityCreate,
         CommunityUpdate,
+        CommunityAmenityOut,
+        CommunityAmenityCreate,
+        CommunityAmenityUpdate,
+        CommunityEventOut,
+        CommunityEventCreate,
+        CommunityEventUpdate,
+        CommunityBuilderCardOut,
+        CommunityBuilderCardCreate,
+        CommunityBuilderCardUpdate,
+        CommunityAdminOut,
+        CommunityAdminCreate,
+        CommunityAdminUpdate,
+        CommunityAwardOut,
+        CommunityAwardCreate,
+        CommunityAwardUpdate,
+        CommunityTopicOut,
+        CommunityTopicCreate,
+        CommunityTopicUpdate,
+        CommunityPhaseOut,
+        CommunityPhaseCreate,
+        CommunityPhaseUpdate,
     )
 except Exception as e:  # pragma: no cover
-    raise ImportError("schema.community.* Pydantic schemas are required") from e
-
-try:
-    from schema.builder import BuilderProfileOut
-except Exception as e:  # pragma: no cover
-    raise ImportError("schema.builder.BuilderProfileOut is required for /{id}/builders") from e
+    raise ImportError("Community Pydantic schemas are missing: schema/community.py") from e
 
 
-router = APIRouter(prefix="/v1/communities", tags=["Communities"])
+router = APIRouter()  # app mounts with /v1
 
 
-# ------------------------------ helpers -------------------------------------
+# -------------------------------- helpers -----------------------------------
 
 def _parse_include(include: Optional[str]) -> Set[str]:
     if not include:
         return set()
-    return {part.strip().lower() for part in include.split(",") if part.strip()}
+    return {p.strip().lower() for p in include.split(",") if p.strip()}
 
 
 def _get_or_404(db: Session, community_id: int) -> CommunityModel:
     obj = db.query(CommunityModel).filter(CommunityModel.id == community_id).first()
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Community not found")
+        raise HTTPException(status_code=404, detail="Community not found")
     return obj
 
 
-def _apply_includes(query, include: Set[str]):
+def _apply_includes(q, include: Set[str]):
+    if "amenities" in include:
+        q = q.options(selectinload(CommunityModel.amenities))
+    if "events" in include:
+        q = q.options(selectinload(CommunityModel.events))
+    if "builder_cards" in include:
+        q = q.options(selectinload(CommunityModel.builder_cards))
+    if "admins" in include:
+        q = q.options(selectinload(CommunityModel.admins))
+    if "awards" in include:
+        q = q.options(selectinload(CommunityModel.awards))
+    if "threads" in include:
+        q = q.options(selectinload(CommunityModel.threads))
+    if "phases" in include:
+        q = q.options(selectinload(CommunityModel.phases))
     if "builders" in include and hasattr(CommunityModel, "builders"):
-        query = query.options(selectinload(CommunityModel.builders))
-    return query
+        q = q.options(selectinload(CommunityModel.builders))
+    return q
 
 
-# ------------------------------- routes -------------------------------------
+# --------------------------------- CRUD -------------------------------------
 
 @router.get("/", response_model=List[CommunityOut])
 def list_communities(
     *,
     db: Session = Depends(get_db),
-    include: Optional[str] = Query(None, description="Comma-separated includes: builders"),
-    q: Optional[str] = Query(None, description="Free-text search across name/description/notes"),
+    include: Optional[str] = Query(None, description="Comma-separated includes: amenities,events,builder_cards,admins,awards,threads,phases,builders"),
+    q: Optional[str] = Query(None, description="Search across name/about/city"),
     city: Optional[str] = Query(None, description="Filter by city"),
-    state: Optional[str] = Query(None, description="Filter by state"),
+    postal_code: Optional[str] = Query(None, description="Filter by postal code"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    current_user=Depends(get_current_user_optional),  # reserved for future auth-aware fields
+    current_user=Depends(get_current_user_optional),
 ):
     includes = _parse_include(include)
     query = db.query(CommunityModel)
     query = _apply_includes(query, includes)
 
-    # Text search
     if q:
         ors = []
-        for col_name in ("name", "description", "notes"):
-            if hasattr(CommunityModel, col_name):
-                ors.append(getattr(CommunityModel, col_name).ilike(f"%{q}%"))
+        for col in ("name", "about", "city"):
+            if hasattr(CommunityModel, col):
+                ors.append(getattr(CommunityModel, col).ilike(f"%{q}%"))
         if ors:
             query = query.filter(or_(*ors))
 
     if city and hasattr(CommunityModel, "city"):
         query = query.filter(CommunityModel.city.ilike(f"%{city}%"))
-    if state and hasattr(CommunityModel, "state"):
-        query = query.filter(CommunityModel.state.ilike(f"%{state}%"))
+    if postal_code and hasattr(CommunityModel, "postal_code"):
+        query = query.filter(CommunityModel.postal_code.ilike(f"%{postal_code}%"))
 
     rows: Sequence[CommunityModel] = query.offset(offset).limit(limit).all()
     return [CommunityOut.model_validate(r) for r in rows]
@@ -121,25 +134,21 @@ def get_community(
     *,
     db: Session = Depends(get_db),
     community_id: int,
-    include: Optional[str] = Query(None, description="Comma-separated includes: builders"),
+    include: Optional[str] = Query(None),
     current_user=Depends(get_current_user_optional),
 ):
     includes = _parse_include(include)
     query = db.query(CommunityModel)
     query = _apply_includes(query, includes)
-
     obj = query.filter(CommunityModel.id == community_id).first()
     if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Community not found")
-
+        raise HTTPException(status_code=404, detail="Community not found")
     return CommunityOut.model_validate(obj)
 
 
 @router.post("/", response_model=CommunityOut, status_code=status.HTTP_201_CREATED)
 def create_community(
-    *,
-    db: Session = Depends(get_db),
-    payload: CommunityCreate,
+    *, db: Session = Depends(get_db), payload: CommunityCreate
 ):
     obj = CommunityModel(**payload.model_dump(exclude_none=True))
     db.add(obj)
@@ -151,18 +160,13 @@ def create_community(
 @router.put("/{community_id}", response_model=CommunityOut)
 @router.patch("/{community_id}", response_model=CommunityOut)
 def update_community(
-    *,
-    db: Session = Depends(get_db),
-    community_id: int,
-    payload: CommunityUpdate,
+    *, db: Session = Depends(get_db), community_id: int, payload: CommunityUpdate
 ):
     obj = _get_or_404(db, community_id)
-
     data = payload.model_dump(exclude_none=True)
     for k, v in data.items():
         if hasattr(obj, k):
             setattr(obj, k, v)
-
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -177,26 +181,323 @@ def delete_community(*, db: Session = Depends(get_db), community_id: int):
     return None
 
 
-# --- Helper routes -----------------------------------------------------------
+# ------------------------------ Nested: Amenities ---------------------------
 
-@router.get("/{community_id}/builders", response_model=List[BuilderProfileOut])
-def list_community_builders(
-    *,
-    db: Session = Depends(get_db),
-    community_id: int,
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    # Ensure community exists (and eager load builders)
-    comm = (
-        db.query(CommunityModel)
-        .options(selectinload(CommunityModel.builders))
-        .filter(CommunityModel.id == community_id)
-        .first()
-    )
-    if not comm:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Community not found")
+@router.get("/{community_id}/amenities", response_model=List[CommunityAmenityOut])
+def list_amenities(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(AmenityModel).filter(AmenityModel.community_id == community_id).all()
+    return [CommunityAmenityOut.model_validate(r) for r in rows]
 
-    # slice builders list manually for now (could be a dedicated query if very large)
-    builders = comm.builders[offset : offset + limit]
-    return [BuilderProfileOut.model_validate(b) for b in builders]
+
+@router.post("/{community_id}/amenities", response_model=CommunityAmenityOut, status_code=status.HTTP_201_CREATED)
+def add_amenity(*, db: Session = Depends(get_db), community_id: int, payload: CommunityAmenityCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = AmenityModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityAmenityOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/amenities/{amenity_id}", response_model=CommunityAmenityOut)
+def update_amenity(*, db: Session = Depends(get_db), community_id: int, amenity_id: int, payload: CommunityAmenityUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(AmenityModel).filter(AmenityModel.id == amenity_id, AmenityModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Amenity not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityAmenityOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/amenities/{amenity_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_amenity(*, db: Session = Depends(get_db), community_id: int, amenity_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(AmenityModel).filter(AmenityModel.id == amenity_id, AmenityModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Amenity not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ------------------------------ Nested: Events ------------------------------
+
+@router.get("/{community_id}/events", response_model=List[CommunityEventOut])
+def list_events(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(EventModel).filter(EventModel.community_id == community_id).all()
+    return [CommunityEventOut.model_validate(r) for r in rows]
+
+
+@router.post("/{community_id}/events", response_model=CommunityEventOut, status_code=status.HTTP_201_CREATED)
+def add_event(*, db: Session = Depends(get_db), community_id: int, payload: CommunityEventCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = EventModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityEventOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/events/{event_id}", response_model=CommunityEventOut)
+def update_event(*, db: Session = Depends(get_db), community_id: int, event_id: int, payload: CommunityEventUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(EventModel).filter(EventModel.id == event_id, EventModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Event not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityEventOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_event(*, db: Session = Depends(get_db), community_id: int, event_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(EventModel).filter(EventModel.id == event_id, EventModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Event not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# --------------------------- Nested: Builder Cards --------------------------
+
+@router.get("/{community_id}/builder-cards", response_model=List[CommunityBuilderCardOut])
+def list_builder_cards(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(BuilderCardModel).filter(BuilderCardModel.community_id == community_id).all()
+    return [CommunityBuilderCardOut.model_validate(r) for r in rows]
+
+
+@router.post("/{community_id}/builder-cards", response_model=CommunityBuilderCardOut, status_code=status.HTTP_201_CREATED)
+def add_builder_card(*, db: Session = Depends(get_db), community_id: int, payload: CommunityBuilderCardCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = BuilderCardModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityBuilderCardOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/builder-cards/{card_id}", response_model=CommunityBuilderCardOut)
+def update_builder_card(*, db: Session = Depends(get_db), community_id: int, card_id: int, payload: CommunityBuilderCardUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(BuilderCardModel).filter(BuilderCardModel.id == card_id, BuilderCardModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Builder card not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityBuilderCardOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/builder-cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_builder_card(*, db: Session = Depends(get_db), community_id: int, card_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(BuilderCardModel).filter(BuilderCardModel.id == card_id, BuilderCardModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Builder card not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ------------------------------- Nested: Admins -----------------------------
+
+@router.get("/{community_id}/admins", response_model=List[CommunityAdminOut])
+def list_admins(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(AdminModel).filter(AdminModel.community_id == community_id).all()
+    return [CommunityAdminOut.model_validate(r) for r in rows]
+
+
+@router.post("/{community_id}/admins", response_model=CommunityAdminOut, status_code=status.HTTP_201_CREATED)
+def add_admin(*, db: Session = Depends(get_db), community_id: int, payload: CommunityAdminCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = AdminModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityAdminOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/admins/{admin_id}", response_model=CommunityAdminOut)
+def update_admin(*, db: Session = Depends(get_db), community_id: int, admin_id: int, payload: CommunityAdminUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(AdminModel).filter(AdminModel.id == admin_id, AdminModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityAdminOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/admins/{admin_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin(*, db: Session = Depends(get_db), community_id: int, admin_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(AdminModel).filter(AdminModel.id == admin_id, AdminModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ------------------------------- Nested: Awards -----------------------------
+
+@router.get("/{community_id}/awards", response_model=List[CommunityAwardOut])
+def list_awards(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(AwardModel).filter(AwardModel.community_id == community_id).all()
+    return [CommunityAwardOut.model_validate(r) for r in rows]
+
+
+@router.post("/{community_id}/awards", response_model=CommunityAwardOut, status_code=status.HTTP_201_CREATED)
+def add_award(*, db: Session = Depends(get_db), community_id: int, payload: CommunityAwardCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = AwardModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityAwardOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/awards/{award_id}", response_model=CommunityAwardOut)
+def update_award(*, db: Session = Depends(get_db), community_id: int, award_id: int, payload: CommunityAwardUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(AwardModel).filter(AwardModel.id == award_id, AwardModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Award not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityAwardOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/awards/{award_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_award(*, db: Session = Depends(get_db), community_id: int, award_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(AwardModel).filter(AwardModel.id == award_id, AwardModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Award not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# ------------------------------- Nested: Topics -----------------------------
+
+@router.get("/{community_id}/topics", response_model=List[CommunityTopicOut])
+def list_topics(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(TopicModel).filter(TopicModel.community_id == community_id).all()
+    return [CommunityTopicOut.model_validate(r) for r in rows]
+
+
+@router.post("/{community_id}/topics", response_model=CommunityTopicOut, status_code=status.HTTP_201_CREATED)
+def add_topic(*, db: Session = Depends(get_db), community_id: int, payload: CommunityTopicCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = TopicModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityTopicOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/topics/{topic_id}", response_model=CommunityTopicOut)
+def update_topic(*, db: Session = Depends(get_db), community_id: int, topic_id: int, payload: CommunityTopicUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(TopicModel).filter(TopicModel.id == topic_id, TopicModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityTopicOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_topic(*, db: Session = Depends(get_db), community_id: int, topic_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(TopicModel).filter(TopicModel.id == topic_id, TopicModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# -------------------------------- Nested: Phases ----------------------------
+
+@router.get("/{community_id}/phases", response_model=List[CommunityPhaseOut])
+def list_phases(*, db: Session = Depends(get_db), community_id: int):
+    _get_or_404(db, community_id)
+    rows = db.query(PhaseModel).filter(PhaseModel.community_id == community_id).all()
+    return [CommunityPhaseOut.model_validate(r) for r in rows]
+
+
+@router.post("/{community_id}/phases", response_model=CommunityPhaseOut, status_code=status.HTTP_201_CREATED)
+def add_phase(*, db: Session = Depends(get_db), community_id: int, payload: CommunityPhaseCreate):
+    _get_or_404(db, community_id)
+    data = payload.model_dump(exclude_none=True)
+    data["community_id"] = community_id
+    obj = PhaseModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityPhaseOut.model_validate(obj)
+
+
+@router.patch("/{community_id}/phases/{phase_id}", response_model=CommunityPhaseOut)
+def update_phase(*, db: Session = Depends(get_db), community_id: int, phase_id: int, payload: CommunityPhaseUpdate):
+    _get_or_404(db, community_id)
+    obj = db.query(PhaseModel).filter(PhaseModel.id == phase_id, PhaseModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Phase not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return CommunityPhaseOut.model_validate(obj)
+
+
+@router.delete("/{community_id}/phases/{phase_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_phase(*, db: Session = Depends(get_db), community_id: int, phase_id: int):
+    _get_or_404(db, community_id)
+    obj = db.query(PhaseModel).filter(PhaseModel.id == phase_id, PhaseModel.community_id == community_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Phase not found")
+    db.delete(obj)
+    db.commit()
+    return None

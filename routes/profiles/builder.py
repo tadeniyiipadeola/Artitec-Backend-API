@@ -18,6 +18,9 @@ from typing import List, Optional, Sequence, Set
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, selectinload
+from model.profiles.builder import Builder as BuilderModel
+from config.db import get_db
+from config.security import get_current_user_optional
 
 # --- Project imports (adjust if your paths differ) ---------------------------
 try:
@@ -32,10 +35,6 @@ except Exception:  # pragma: no cover
     def get_current_user_optional():  # type: ignore
         return None
 
-try:
-    from model.profiles.builder import Builder as BuilderModel  # SQLAlchemy model
-except Exception as e:  # pragma: no cover
-    raise ImportError("model.profiles.builder.Builder model not found") from e
 
 try:
     from model.social.models import Follow  # for follower metrics
@@ -52,7 +51,7 @@ except Exception as e:  # pragma: no cover
     raise ImportError("schema.builder.* Pydantic schemas are required") from e
 
 
-router = APIRouter(prefix="/v1/profiles/builders", tags=["Builder Profiles"])
+router = APIRouter()
 
 
 # ------------------------------ helpers -------------------------------------

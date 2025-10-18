@@ -12,7 +12,7 @@ from model.profiles.buyer import BuyerProfile, BuyerTour, BuyerDocument, TourSta
 from model.user import User
 from schema.buyers import BuyerProfileIn, BuyerProfileOut, TourIn, TourOut, DocumentIn, DocumentOut
 
-router = APIRouter(prefix="/buyers", tags=["buyers"]) 
+router = APIRouter() 
 
 # ---------- Helpers ----------
 

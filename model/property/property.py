@@ -1,59 +1,60 @@
-
-
-# model/profiles/property.py
+# model/property.py
 from sqlalchemy import (
-    Column, String, Integer, Float, Text, JSON, TIMESTAMP, ForeignKey
+    Column, String, Integer, Float, Text, JSON, TIMESTAMP, ForeignKey, Numeric, Boolean
 )
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from model.base import Base
+# Import association table from builder module (no circular import back from builder)
 from model.profiles.builder import builder_portfolio
 
 
 class Property(Base):
+    """Primary Property listing model.
+
+    Matches the Pydantic schema in schema/property.py and is compatible with
+    the routes in routes/property/property.py.
     """
-    Mirrors SwiftUI PropertyRef/PropertyPage domain model.
-    Uses internal numeric IDs with a public UUID string (public_id) for app routing.
-    Associations to Builder, Community, and optional SalesRep.
-    """
+
     __tablename__ = "properties"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    public_id = Column(String(36), unique=True, nullable=False)  # UUID string
 
-    # Core
-    title = Column(String(255), nullable=False)
-    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builders.id", ondelete="RESTRICT"), nullable=False)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="RESTRICT"), nullable=False)
-    sales_rep_id = Column(MyBIGINT(unsigned=True), ForeignKey("sales_reps.id", ondelete="SET NULL"))
+    # Ownership / authorship
+    owner_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    # Details
-    gallery = Column(JSON, nullable=False, default=list)           # list[str] of image URLs
-    beds = Column(Integer, nullable=False)
-    baths = Column(Float, nullable=False)
-    sqft = Column(Integer, nullable=False)
+    # Core details
+    title = Column(String(140), nullable=False)
+    description = Column(Text)
 
-    # Display pricing/meta kept as strings to match UI formatting; normalize later if needed
-    price = Column(String(64))                 # e.g., "$549,900"
-    lot_size = Column(String(64))              # e.g., "8,450 sqft"
-    year_built = Column(String(16))
-    property_tax_annual = Column(String(64))   # e.g., "$9,800/yr" or "2.75%"
-    community_dues_monthly = Column(String(64))
+    # Address / location
+    address1 = Column(String(255), nullable=False)
+    address2 = Column(String(255))
+    city = Column(String(120), nullable=False)
+    state = Column(String(120), nullable=False)
+    postal_code = Column(String(20), nullable=False)
+    latitude = Column(Float)
+    longitude = Column(Float)
 
-    # Plans & collateral
-    plan_images = Column(JSON, nullable=False, default=list)      # list[str]
-    plan_pdf = Column(String(1024))                               # URL string
+    # Specs
+    price = Column(Numeric(12, 2), nullable=False)
+    bedrooms = Column(Integer, nullable=False, default=0)
+    bathrooms = Column(Float, nullable=False, default=0)
+    sqft = Column(Integer)
+    lot_sqft = Column(Integer)
+    year_built = Column(Integer)
 
-    # Meta
-    tags = Column(JSON, nullable=False, default=list)             # list[str]
-    about = Column(Text)
+    # Associations / flags
+    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builders.id", ondelete="SET NULL"), nullable=True)
+    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="SET NULL"), nullable=True)
+    has_pool = Column(Boolean, default=False)
 
-    # Engagement (optional — can be moved to analytics service later)
-    like_count = Column(Integer, nullable=False, default=0)
-    comment_count = Column(Integer, nullable=False, default=0)
-    save_count = Column(Integer, nullable=False, default=0)
+    # Media (store as JSON array of URLs)
+    media_urls = Column(JSON)
 
+    # Timestamps
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(
         TIMESTAMP,
@@ -61,14 +62,10 @@ class Property(Base):
         onupdate=func.current_timestamp(),
         nullable=False,
     )
+    listed_at = Column(TIMESTAMP)
 
     # Relationships
-    builder = relationship("Builder")
-    community = relationship("Community")
-    sales_rep = relationship("SalesRep")
-
-    # Many-to-many: any builders linked to this property via builder_portfolio
-    # Note: keep `builder` (FK) as the primary/owning builder; use `builders` for portfolio associations.
+    # Many-to-many with builders via portfolio (collection of builders who built this property)
     builders = relationship(
         "Builder",
         secondary=builder_portfolio,
@@ -76,5 +73,25 @@ class Property(Base):
         lazy="selectin",
     )
 
+    # Optional direct relations (primary builder/community, if applicable)
+    primary_builder = relationship("Builder", foreign_keys=[builder_id], lazy="selectin", viewonly=True)
+    community = relationship("Community", foreign_keys=[community_id], lazy="selectin", viewonly=True)
+
     def __repr__(self):
-        return f"<Property(title='{self.title}', beds={self.beds}, baths={self.baths}, sqft={self.sqft})>"
+        return f"<Property(title='{self.title}', city='{self.city}', price={self.price})>"
+
+
+# Optional favorites model to support save/like behavior in routes/property/property.py
+class FavoriteProperty(Base):
+    __tablename__ = "favorite_properties"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(MyBIGINT(unsigned=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+
+    # Basic relationships (not strictly necessary for the router but helpful)
+    # Using lazy='selectin' to avoid N+1 queries in list endpoints
+    user = relationship("User", lazy="selectin")
+    property = relationship("Property", lazy="selectin")

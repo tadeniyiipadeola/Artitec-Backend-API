@@ -40,6 +40,17 @@ class User(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    sales_rep_profile = relationship(
+        "SalesRepProfile",
+        uselist=False,
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    community_admin_links = relationship(
+        "CommunityAdminLink",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 class UserCredential(Base):
     __tablename__ = "user_credentials"
@@ -142,6 +153,7 @@ class CommunityAdminLink(Base):
     requested_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     decided_at = Column(DateTime)
 
+    user = relationship("User", back_populates="community_admin_links")
     __table_args__ = (
         UniqueConstraint("user_id", "org_id", name="uq_admin_user_org"),
         Index("ix_admin_status", "status"),
@@ -166,25 +178,7 @@ class SalesRepProfile(Base):
     office_location = Column(String(255))
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("organizations.id", ondelete="SET NULL"))  # optional link to community org
 
-# Buyer preferences (1:1 with user)
-class BuyerPreferences(Base):
-    __tablename__ = "buyer_preferences"
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-
-    # Personal (duplicated minimally for quick cards; canonical lives in users)
-    sex = Column(SAEnum("female", "male", "non_binary", "prefer_not", name="sex_pref"))
-
-    # Preferences
-    income_range = Column(String(64))  # "$100k–$200k"
-    first_time = Column(SAEnum("yes", "no", "prefer_not", name="first_time_flag"))
-    home_type = Column(SAEnum("single_home", "multiple_homes", name="home_type"))
-    budget_min = Column(Integer)
-    budget_max = Column(Integer)
-    location_interest = Column(String(255))
-    builder_interest = Column(String(255))
-
-    # Extra future-proofing
-    meta = Column(JSON)  # room for additional captured fields without migrations
+    user = relationship("User", back_populates="sales_rep_profile")
 
 # Optional: store raw onboarding JSON payloads for troubleshooting
 class OnboardingForm(Base):
@@ -196,13 +190,6 @@ class OnboardingForm(Base):
     status = Column(SAEnum("preview", "committed", name="onboard_status"), nullable=False, server_default="preview")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
 
-# -----------------
-# Relationships on existing models
-# -----------------
-# Attach relationships to User so you can eager-load profiles in one go
-User.sales_rep_profile = relationship("SalesRepProfile", uselist=False, cascade="all, delete-orphan")
-User.buyer_preferences = relationship("BuyerPreferences", uselist=False, cascade="all, delete-orphan")
-User.community_admin_links = relationship("CommunityAdminLink", cascade="all, delete-orphan")
 
 # Optionally make it convenient to navigate across organizations
 Organization.builder_profile = relationship("BuilderProfile", uselist=False, cascade="all, delete-orphan")

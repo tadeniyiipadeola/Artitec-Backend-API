@@ -1,22 +1,23 @@
-
-
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from core.db import get_db
-from core.security import get_current_user
+from config.db import get_db
+from config.security import get_current_user
 
 # Schemas (Pydantic)
 from schema.property import (
     PropertyCreate,
     PropertyUpdate,
     PropertyOut,
+    PropertyRelationsOut,
+    LinkedBuilderOut,
+    LinkedCommunityOut,
 )
 
 # Models (SQLAlchemy)
-from model.property import Property  # assumes you have this model
+from model.property.property import Property  # correct import path
 from model.user import User
 
 # Optional models (only used if present in your codebase)
@@ -38,7 +39,7 @@ def create_property(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new property listing owned by the current user."""
-    prop = Property(**payload.dict(), owner_id=current_user.id)
+    prop = Property(**payload.model_dump(exclude_none=True), owner_id=current_user.id)
     db.add(prop)
     db.commit()
     db.refresh(prop)
@@ -63,7 +64,7 @@ def list_properties(
     builder_id: Optional[int] = None,
     community_id: Optional[int] = None,
     has_pool: Optional[bool] = None,
-    sort: str = Query("listed_at_desc", regex="^(listed_at|price|beds)_(asc|desc)$"),
+    sort: str = Query("listed_at_desc", pattern=r"^(listed_at|price|beds)_(asc|desc)$"),
 ):
     """List properties with basic search and filters.
 
@@ -116,6 +117,38 @@ def get_property(property_id: int, db: Session = Depends(get_db)):
 
 
 # ----------------------------------------------------------------------------
+# Relations (community & builders)
+# ----------------------------------------------------------------------------
+@router.get("/{property_id}/relations", response_model=PropertyRelationsOut)
+def get_property_relations(property_id: int, db: Session = Depends(get_db)):
+    prop = (
+        db.query(Property)
+        .options(
+            selectinload(Property.primary_builder),
+            selectinload(Property.builders),
+            selectinload(Property.community),
+        )
+        .filter(Property.id == property_id)
+        .first()
+    )
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    primary = LinkedBuilderOut.from_orm(prop.primary_builder) if getattr(prop, "primary_builder", None) else None
+    builders = [LinkedBuilderOut.from_orm(b) for b in (prop.builders or [])]
+    community = (
+        LinkedCommunityOut.from_orm(prop.community) if getattr(prop, "community", None) else None
+    )
+
+    return PropertyRelationsOut(
+        property_id=prop.id,
+        primary_builder=primary,
+        builders=builders,
+        community=community,
+    )
+
+
+# ----------------------------------------------------------------------------
 # Update (owner only)
 # ----------------------------------------------------------------------------
 @router.patch("/{property_id}", response_model=PropertyOut)
@@ -131,7 +164,7 @@ def update_property(
     if prop.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to update this property")
 
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
     for k, v in update_data.items():
         setattr(prop, k, v)
 
