@@ -1,6 +1,6 @@
 # model/profiles/builder.py
 from sqlalchemy import (
-    Column, String, Float, Integer, Text, JSON, TIMESTAMP, ForeignKey
+    Column, String, Float, Integer, Text, JSON, TIMESTAMP, ForeignKey, Table
 )
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
@@ -8,10 +8,33 @@ from sqlalchemy.sql import func
 from model.base import Base
 
 
+# --- Association Tables ------------------------------------------------------
+# Many-to-many: builders ↔ properties (portfolio)
+# Expects a `properties` table/model defined elsewhere as `Property`.
+builder_portfolio = Table(
+    "builder_portfolio",
+    Base.metadata,
+    Column("builder_id", MyBIGINT(unsigned=True), ForeignKey("builders.id", ondelete="CASCADE"), primary_key=True),
+    Column("property_id", MyBIGINT(unsigned=True), ForeignKey("properties.id", ondelete="CASCADE"), primary_key=True),
+)
+
+# Many-to-many: builders ↔ communities (active build areas)
+# Expects a `communities` table/model defined elsewhere as `Community`.
+builder_communities = Table(
+    "builder_communities",
+    Base.metadata,
+    Column("builder_id", MyBIGINT(unsigned=True), ForeignKey("builders.id", ondelete="CASCADE"), primary_key=True),
+    Column("community_id", MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class Builder(Base):
     """
     Mirrors SwiftUI Builder struct.
     Represents a home builder / construction firm with specialties and ratings.
+    Also links to:
+      - portfolio properties via builder_portfolio
+      - active communities via builder_communities
     """
     __tablename__ = "builders"
 
@@ -40,6 +63,21 @@ class Builder(Base):
 
     # Relationships
     sales_reps = relationship("SalesRep", back_populates="builder", cascade="all, delete-orphan")
+
+    # Many-to-many relationships
+    properties = relationship(
+        "Property",
+        secondary=builder_portfolio,
+        back_populates="builders",
+        lazy="selectin",
+    )
+
+    communities = relationship(
+        "Community",
+        secondary=builder_communities,
+        back_populates="builders",
+        lazy="selectin",
+    )
 
     def __repr__(self):
         return f"<Builder(name='{self.name}', rating={self.rating})>"

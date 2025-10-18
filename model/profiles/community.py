@@ -6,12 +6,17 @@ from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from model.base import Base
+from model.profiles.builder import builder_communities
 
 
 class Community(Base):
     """
     Mirrors SwiftUI Community struct. Represents a real-world residential community
     or HOA-style group (now renamed to Community in code).
+
+    Relationships:
+      - builders: many-to-many to real Builder entities via builder_communities (active builders in this community)
+      - builder_cards: legacy/marketing cards table for curated builder tiles
     """
     __tablename__ = "communities"
 
@@ -48,11 +53,19 @@ class Community(Base):
     # Relationships (1-to-many)
     amenities = relationship("CommunityAmenity", cascade="all, delete-orphan")
     events = relationship("CommunityEvent", cascade="all, delete-orphan")
-    builders = relationship("CommunityBuilder", cascade="all, delete-orphan")
+    builder_cards = relationship("CommunityBuilder", cascade="all, delete-orphan")
     admins = relationship("CommunityAdmin", cascade="all, delete-orphan")
     awards = relationship("CommunityAward", cascade="all, delete-orphan")
     threads = relationship("CommunityTopic", cascade="all, delete-orphan")
     phases = relationship("CommunityPhase", cascade="all, delete-orphan")
+
+    # Many-to-many: real Builder entities active in this community
+    builders = relationship(
+        "Builder",
+        secondary=builder_communities,
+        back_populates="communities",
+        lazy="selectin",
+    )
 
 
 # ---------- Related Tables ----------

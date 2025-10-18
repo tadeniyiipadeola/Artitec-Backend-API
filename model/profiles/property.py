@@ -8,6 +8,7 @@ from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from model.base import Base
+from model.profiles.builder import builder_portfolio
 
 
 class Property(Base):
@@ -65,6 +66,15 @@ class Property(Base):
     builder = relationship("Builder")
     community = relationship("Community")
     sales_rep = relationship("SalesRep")
+
+    # Many-to-many: any builders linked to this property via builder_portfolio
+    # Note: keep `builder` (FK) as the primary/owning builder; use `builders` for portfolio associations.
+    builders = relationship(
+        "Builder",
+        secondary=builder_portfolio,
+        back_populates="properties",
+        lazy="selectin",
+    )
 
     def __repr__(self):
         return f"<Property(title='{self.title}', beds={self.beds}, baths={self.baths}, sqft={self.sqft})>"
