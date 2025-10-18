@@ -34,6 +34,12 @@ class User(Base):
 
     user_type = relationship("UserType")
     creds = relationship("UserCredential", uselist=False, back_populates="user")
+    buyer_profile = relationship(
+        "BuyerProfile",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 class UserCredential(Base):
     __tablename__ = "user_credentials"

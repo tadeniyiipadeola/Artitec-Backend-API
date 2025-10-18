@@ -1,0 +1,149 @@
+# schema/auth.py
+from __future__ import annotations
+from typing import List, Optional, Literal, Union, Annotated, Dict
+from datetime import datetime
+from pydantic import BaseModel, Field, EmailStr
+
+PlanLiteral = Literal[
+    "userFree",
+    "builderFree",
+    "builderPro",
+    "builderEnterprise",
+    "communityFree",
+    "communityEnterprise",
+    "existingActive",
+    "salesRep",
+    "communityAdminVerify",
+]
+
+class OrgLookupOut(BaseModel):
+    is_existing: bool
+    existing_active: bool
+    tier: Optional[str] = None
+    org_type: Optional[str] = None
+    no_pay: bool
+
+class RoleSelectionIn(BaseModel):
+    user_public_id: str
+    role: Literal["user", "builder", "community"]
+    org_id: Optional[str] = None
+    selected_plan: Optional[PlanLiteral] = None
+
+class UserOutLite(BaseModel):
+    public_id: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: EmailStr
+    is_email_verified: bool
+    created_at: datetime
+
+class RoleSelectionOut(BaseModel):
+    user: UserOutLite
+    role: str
+    plan_label: Optional[str] = None
+    requires_payment: bool
+    next_step: Literal["finish", "checkout", "await_verification"]
+    messages: List[str]
+    parsed_org: Optional[OrgLookupOut] = None
+
+# --- Role-scoped form payloads ---
+class BuilderForm(BaseModel):
+    role: Literal["builder"] = "builder"
+    user_public_id: str
+    company_name: str
+    enterprise_number: Optional[str] = None
+    company_address: Optional[str] = None
+    staff_size: Optional[str] = None
+    years_in_business: Optional[int] = None
+    website_url: Optional[str] = None
+
+class CommunityForm(BaseModel):
+    role: Literal["community"] = "community"
+    user_public_id: str
+    community_name: str
+    community_address: Optional[str] = None
+    city: str
+    state: str
+    stage: Optional[str] = None
+    enterprise_number: Optional[str] = None
+
+class CommunityAdminForm(BaseModel):
+    role: Literal["communityAdmin"] = "communityAdmin"
+    user_public_id: str
+    first_name: str
+    last_name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    sex: Optional[str] = None
+    community_link: str
+    community_address: Optional[str] = None
+
+class SalesRepForm(BaseModel):
+    role: Literal["salesRep"] = "salesRep"
+    user_public_id: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    sex: Optional[str] = None
+    dob: Optional[datetime] = None
+    company_account_number: Optional[str] = None
+    office_location: Optional[str] = None
+    community_id: Optional[str] = None
+    brokerage: Optional[str] = None
+    license_id: Optional[str] = None
+    years_at_company: Optional[int] = None
+
+class BuyerForm(BaseModel):
+    role: Literal["buyer"] = "buyer"
+    user_public_id: str
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: str
+    address: str
+    city: str
+    state: str
+    zip: Optional[str] = None
+    sex: Optional[str] = None
+    income_range: Optional[str] = None
+    first_time: Optional[str] = None
+    home_type: Optional[str] = None
+    budget_min: Optional[str] = None
+    budget_max: Optional[str] = None
+    location_interest: Optional[str] = None
+    builder_interest: Optional[str] = None
+
+RoleForm = Annotated[
+    Union[BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm],
+    Field(discriminator="role"),
+]
+
+class FormPreviewOut(BaseModel):
+    role: str
+    valid: bool
+    missing: Dict[str, str] = Field(default_factory=dict)
+    suggestions: List[str] = Field(default_factory=list)
+    next_step: Literal["finish", "await_verification", "review"]
+
+class FormCommitOut(BaseModel):
+    role: str
+    saved: bool
+    messages: List[str]
+    next_step: Literal["finish", "await_verification"]
+
+__all__ = [
+    "PlanLiteral",
+    "OrgLookupOut",
+    "RoleSelectionIn",
+    "RoleSelectionOut",
+    "UserOutLite",
+    "BuilderForm",
+    "CommunityForm",
+    "CommunityAdminForm",
+    "SalesRepForm",
+    "BuyerForm",
+    "RoleForm",
+    "FormPreviewOut",
+    "FormCommitOut",
+]

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from routes.auth import router as auth_router
+from routes.profiles import buyers
 
 from config.db import engine, SessionLocal
 from model.base import Base
@@ -36,6 +37,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["auth"])
+app.include_router(buyers.router, prefix="/v1")
 
 
 # --- Exception handlers and security headers ---

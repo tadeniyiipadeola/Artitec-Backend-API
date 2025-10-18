@@ -1,5 +1,4 @@
-from typing import Optional, Literal, List
-from pydantic import BaseModel, EmailStr, constr, ConfigDict
+from typing import Optional, Literal, List, Dict
 # routes/auth.py
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,14 +8,17 @@ import logging
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
 from model.user import User, UserCredential, EmailVerification, SessionToken, UserType
+from schema.auth import (
+    OrgLookupOut, RoleSelectionIn, RoleSelectionOut,
+    RoleForm, FormPreviewOut, FormCommitOut, PlanLiteral,
+    BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm,
+)
 from src.schemas import RegisterIn, LoginIn, AuthOut, UserOut
 from src.utils import gen_public_id, gen_token_hex, hash_password, verify_password, make_access_token
 
 
 logger = logging.getLogger(__name__)
 
-# Lightweight redaction + safe dict defaults
-from pydantic import Field as PydField
 
 def _redact(s: Optional[str], keep: int = 3) -> str:
     if not s:
@@ -167,43 +169,6 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         requires_email_verification=not u.is_email_verified
     )
 
-# =============================
-# Role Selection (Onboarding)
-# =============================
-class OrgLookupOut(BaseModel):
-    is_existing: bool
-    existing_active: bool
-    tier: Optional[str] = None  # one of: free, pro, enterprise
-    org_type: Optional[str] = None  # one of: builder, community
-    no_pay: bool
-
-PlanLiteral = Literal[
-    "userFree",
-    "builderFree",
-    "builderPro",
-    "builderEnterprise",
-    "communityFree",
-    "communityEnterprise",
-    "existingActive",
-    "salesRep",
-    "communityAdminVerify",
-]
-
-class RoleSelectionIn(BaseModel):
-    # We use public_id so the client can call this right after /register
-    user_public_id: str
-    role: Literal["user", "builder", "community"]
-    org_id: Optional[str] = None
-    selected_plan: Optional[PlanLiteral] = None
-
-class RoleSelectionOut(BaseModel):
-    user: UserOut
-    role: str
-    plan_label: Optional[str] = None
-    requires_payment: bool
-    next_step: Literal["finish", "checkout", "await_verification"]
-    messages: List[str]
-    parsed_org: Optional[OrgLookupOut] = None
 
 def _parse_org_id(input_id: Optional[str]) -> OrgLookupOut:
     if not input_id:
@@ -410,97 +375,6 @@ def role_selection_commit(body: RoleSelectionIn, db: Session = Depends(get_db)):
 # =============================
 # Step 3: Role-Based Form (Preview & Commit)
 # =============================
-from pydantic import Field
-from typing import Union, Annotated, Dict
-
-# --- Role-scoped form payloads (mirror the SwiftUI RoleSelectionView) ---
-class BuilderForm(BaseModel):
-    role: Literal["builder"] = "builder"
-    user_public_id: str
-    company_name: str
-    enterprise_number: Optional[str] = None
-    company_address: Optional[str] = None
-    staff_size: Optional[str] = None  # "1–5", "6–10", etc.
-    years_in_business: Optional[int] = None
-    website_url: Optional[str] = None
-
-class CommunityForm(BaseModel):
-    role: Literal["community"] = "community"
-    user_public_id: str
-    community_name: str
-    community_address: Optional[str] = None
-    city: str
-    state: str
-    stage: Optional[str] = None  # "Pre-development", "First phase", etc.
-    enterprise_number: Optional[str] = None
-
-class CommunityAdminForm(BaseModel):
-    role: Literal["communityAdmin"] = "communityAdmin"
-    user_public_id: str
-    first_name: str
-    last_name: str
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
-    sex: Optional[str] = None
-    community_link: str  # existing community lookup text/ID
-    community_address: Optional[str] = None
-
-class SalesRepForm(BaseModel):
-    role: Literal["salesRep"] = "salesRep"
-    user_public_id: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    address: Optional[str] = None
-    phone: Optional[str] = None
-    sex: Optional[str] = None
-    dob: Optional[datetime] = None
-    company_account_number: Optional[str] = None
-    office_location: Optional[str] = None
-    community_id: Optional[str] = None
-    brokerage: Optional[str] = None
-    license_id: Optional[str] = None
-    years_at_company: Optional[int] = None
-
-class BuyerForm(BaseModel):
-    role: Literal["buyer"] = "buyer"
-    user_public_id: str
-    # personal
-    first_name: str
-    last_name: str
-    email: EmailStr
-    phone: str
-    address: str
-    city: str
-    state: str
-    zip: Optional[str] = None
-    sex: Optional[str] = None
-    # preferences
-    income_range: Optional[str] = None
-    first_time: Optional[str] = None  # "Yes"/"No"/"Prefer not to say"
-    home_type: Optional[str] = None   # "Single home"/"Multiple homes"
-    budget_min: Optional[str] = None
-    budget_max: Optional[str] = None
-    location_interest: Optional[str] = None
-    builder_interest: Optional[str] = None
-
-# Tagged union keyed by `role`
-RoleForm = Annotated[
-    Union[BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm],
-    Field(discriminator="role")
-]
-
-class FormPreviewOut(BaseModel):
-    role: str
-    valid: bool
-    missing: Dict[str, str] = PydField(default_factory=dict)  # field -> reason
-    suggestions: List[str] = PydField(default_factory=list)    # UX messages to show
-    next_step: Literal["finish", "await_verification", "review"]
-
-class FormCommitOut(BaseModel):
-    role: str
-    saved: bool
-    messages: List[str]
-    next_step: Literal["finish", "await_verification"]
 
 
 def _validate_role_form(form: RoleForm) -> FormPreviewOut:
