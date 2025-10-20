@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover
 
 from config.db import engine, SessionLocal
 from model.base import Base
-from model.user import UserType
+from model.user import RoleType
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["Authentication"])
+# app.include_router(buyerForms.router, prefix="/v1/buyer-forms", tags=["Buyer Forms"])
 app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
 app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
@@ -106,28 +107,25 @@ async def add_security_headers(request: Request, call_next):
 def _startup():
     # Create tables if they don't exist (dev)
     Base.metadata.create_all(engine)
-    logger.info("DB metadata ensured. Seeding user types if missing…")
+    logger.info("DB metadata ensured. Seeding role types if missing…")
 
-    # Seed user_types if missing (dev)
+    # Seed role_types if missing (dev)
     db = SessionLocal()
     try:
-        codes = {c for (c,) in db.query(UserType.code).all()}
+        codes = {c for (c,) in db.query(RoleType.code).all()}
         needed = [
-            ("member", "Member"),
-            ("user", "User"),
-            ("homeowner", "Homeowner"),
+            ("buyer", "Buyer"),
             ("builder", "Builder"),
             ("community", "Community"),
             ("community_admin", "Community Admin"),
-            ("sales_rep", "Sales Rep"),
-            ("admin", "Platform Admin"),
-            ("pending", "Pending Verification"),
+            ("salesrep", "Sales Representative"),
+            ("admin", "Administrator"),
         ]
         for code, display in needed:
             if code not in codes:
-                db.add(UserType(code=code, display_name=display))
+                db.add(RoleType(code=code, display_name=display))
         db.commit()
-        logger.info("User types seeded: now present => %s", sorted({c for (c,) in db.query(UserType.code).all()}))
+        logger.info("Role types seeded: now present => %s", sorted({c for (c,) in db.query(RoleType.code).all()}))
     finally:
         db.close()
 

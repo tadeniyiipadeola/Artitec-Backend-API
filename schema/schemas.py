@@ -3,6 +3,9 @@ from datetime import datetime
 from typing import Optional, Literal, Union, Annotated, List, Dict
 from pydantic import BaseModel, EmailStr, constr, model_validator, ConfigDict
 from pydantic import Field as PydField
+from decimal import Decimal
+
+RoleLiteral = Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
 
 class RegisterIn(BaseModel):
     first_name: str
@@ -36,9 +39,13 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    user_type: Optional[str] = None
+    role: Optional[RoleLiteral] = None
+    buyer_profile_id: Optional[int] = None
     is_email_verified: bool
+    onboarding_complete: bool = False
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 class AuthOut(BaseModel):
     user: UserOut
@@ -57,7 +64,7 @@ class OrgLookupOut(BaseModel):
     is_existing: bool
     existing_active: bool
     tier: Optional[str] = None  # one of: free, pro, enterprise
-    org_type: Optional[str] = None  # one of: builder, community
+    org_type: Optional[Literal["builder", "community"]] = None  # one of: builder, community
     no_pay: bool
 
 PlanLiteral = Literal[
@@ -74,13 +81,13 @@ PlanLiteral = Literal[
 
 class RoleSelectionIn(BaseModel):
     user_public_id: str
-    role: Literal["user", "builder", "community"]
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep"]
     org_id: Optional[str] = None
     selected_plan: Optional[PlanLiteral] = None
 
 class RoleSelectionOut(BaseModel):
     user: UserOut
-    role: str
+    role: RoleLiteral
     plan_label: Optional[str] = None
     requires_payment: bool
     next_step: Literal["finish", "checkout", "await_verification"]
@@ -111,7 +118,7 @@ class CommunityForm(BaseModel):
     enterprise_number: Optional[str] = None
 
 class CommunityAdminForm(BaseModel):
-    role: Literal["communityAdmin"] = "communityAdmin"
+    role: Literal["community_admin"] = "community_admin"
     user_public_id: str
     first_name: str
     last_name: str
@@ -122,7 +129,7 @@ class CommunityAdminForm(BaseModel):
     community_address: Optional[str] = None
 
 class SalesRepForm(BaseModel):
-    role: Literal["salesRep"] = "salesRep"
+    role: Literal["salesrep"] = "salesrep"
     user_public_id: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -148,16 +155,23 @@ class BuyerForm(BaseModel):
     address: str
     city: str
     state: str
-    zip: Optional[str] = None
+    zip_code: Optional[str] = None
     sex: Optional[str] = None
     # preferences
     income_range: Optional[str] = None
     first_time: Optional[str] = None  # "Yes"/"No"/"Prefer not to say"
     home_type: Optional[str] = None   # "Single home"/"Multiple homes"
-    budget_min: Optional[str] = None
-    budget_max: Optional[str] = None
+    budget_min: Optional[Decimal] = None
+    budget_max: Optional[Decimal] = None
     location_interest: Optional[str] = None
     builder_interest: Optional[str] = None
+
+    @model_validator(mode="after")
+    def check_budget_range(self):
+        if self.budget_min is not None and self.budget_max is not None:
+            if self.budget_min > self.budget_max:
+                raise ValueError("budget_min cannot be greater than budget_max")
+        return self
 
 # Tagged union keyed by `role`
 RoleForm = Annotated[

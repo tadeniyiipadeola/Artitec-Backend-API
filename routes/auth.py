@@ -7,13 +7,13 @@ import logging
 
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
-from model.user import User, UserCredential, EmailVerification, SessionToken, UserType
+from model.user import User, UserCredential, EmailVerification, SessionToken, RoleType
 from schema.auth import (
     OrgLookupOut, RoleSelectionIn, RoleSelectionOut,
     RoleForm, FormPreviewOut, FormCommitOut, PlanLiteral,
     BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm,
 )
-from src.schemas import RegisterIn, LoginIn, AuthOut, UserOut
+from schema.schemas import RegisterIn, LoginIn, AuthOut, UserOut
 from src.utils import gen_public_id, gen_token_hex, hash_password, verify_password, make_access_token
 
 
@@ -44,15 +44,15 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Register endpoint called with email=%s", body.email)
     logger.debug("Handling /register request body: %s", body.dict(exclude={'password','confirm_password'}))
     # Pick a temporary default role so we can create the record now; update on next step
-    ut = db.query(UserType).filter(UserType.code == "pending").one_or_none()
-    if not ut:
-        ut = db.query(UserType).filter(UserType.code == "member").one_or_none()
-    if not ut:
-        logger.error("Default user type not found")
-        # Clear guidance if types aren't seeded
+    rt = db.query(RoleType).filter(RoleType.code == "buyer").one_or_none()
+    if not rt:
+        # Fallback to any available role type
+        rt = db.query(RoleType).first()
+    if not rt:
+        logger.error("Default role type not found")
         raise HTTPException(
             status_code=500,
-            detail="Default user type not seeded. Create a 'pending' or 'member' user type."
+            detail="Default role types not seeded. Seed role_types with at least one entry (e.g., 'buyer')."
         )
 
     logger.debug("Checking if email already exists: %s", body.email)
@@ -72,7 +72,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         first_name=body.first_name,
         last_name=body.last_name,
         phone_e164=body.phone_e164,
-        user_type_id=ut.id
+        role_type_id=rt.id
     )
     db.add(u)
     db.flush()
@@ -110,10 +110,10 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     return AuthOut(
         user=UserOut(
             public_id=u.public_id,
-            first_name=u.first_name,    
+            first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
-            # user_type=ut.code,
+            # role_type=rt.code,
             is_email_verified=u.is_email_verified,
             created_at=u.created_at
         ),
@@ -160,7 +160,7 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
-            # user_type=u.user_type.code,
+            # role_type=u.role_type.code,
             is_email_verified=u.is_email_verified,
             created_at=u.created_at
         ),
@@ -209,22 +209,23 @@ def _plan_label(plan: Optional[str]) -> Optional[str]:
     }
     return mapping.get(plan) if plan else None
 
-def _resolve_user_type_code(db: Session, role: str) -> UserType:
-    # Attempt to map role to a concrete UserType (with safe fallbacks)
+def _resolve_role_type_code(db: Session, role: str) -> RoleType:
     preferred_codes = {
-        "user": ["member", "user", "pending"],
-        "builder": ["builder", "member", "pending"],
-        "community": ["community_admin", "community", "member", "pending"],
+        "buyer": ["buyer"],
+        "builder": ["builder"],
+        "community": ["community"],
+        "community_admin": ["community_admin"],
+        "salesrep": ["salesrep"],
+        "admin": ["admin"],
     }
-    for code in preferred_codes.get(role, ["member", "pending"]):
-        ut = db.query(UserType).filter(UserType.code == code).one_or_none()
-        if ut:
-            return ut
-    # last resort: any existing UserType record
-    ut_any = db.query(UserType).first()
-    if not ut_any:
-        raise HTTPException(status_code=500, detail="No user types are seeded.")
-    return ut_any
+    for code in preferred_codes.get(role, [role]):
+        rt = db.query(RoleType).filter(RoleType.code == code).one_or_none()
+        if rt:
+            return rt
+    rt_any = db.query(RoleType).first()
+    if not rt_any:
+        raise HTTPException(status_code=500, detail="No role types are seeded.")
+    return rt_any
 
 @router.get("/role/org-lookup", response_model=OrgLookupOut)
 def org_lookup(id: str):
@@ -252,13 +253,11 @@ def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db))
         parsed = _parse_org_id(body.org_id)
         messages: List[str] = []
 
-        # Basic cross-checks between role and selected plan
-        if body.role == "user":
-            # Force plan to userFree regardless
+        if body.role == "buyer":
             plan = "userFree"
             next_step = "finish"
             requires_payment = False
-            messages.append("User plan is always free. You can finish onboarding.")
+            messages.append("Buyer accounts are free. You can finish onboarding.")
         elif body.role == "builder":
             plan = body.selected_plan
             if plan in (None, "existingActive") and parsed.existing_active:
@@ -303,6 +302,23 @@ def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db))
                 requires_payment = True
             else:
                 raise HTTPException(status_code=422, detail="Invalid community plan selection.")
+        elif body.role == "community_admin":
+            # Admins must be tied to an existing community; treat as verification flow
+            plan = "communityAdminVerify"
+            next_step = "await_verification"
+            requires_payment = False
+            if not body.org_id:
+                messages.append("Enter a Community ID so our team can verify.")
+            else:
+                messages.append("We will verify the Community ID you provided.")
+        elif body.role == "salesrep":
+            plan = "salesRep"
+            next_step = "await_verification"
+            requires_payment = False
+            if not body.org_id:
+                messages.append("Enter a Builder ID so our team can verify.")
+            else:
+                messages.append("Sales will verify the Builder ID you provided.")
         else:
             raise HTTPException(status_code=422, detail="Unknown role.")
 
@@ -355,14 +371,15 @@ def role_selection_commit(body: RoleSelectionIn, db: Session = Depends(get_db)):
         if not u:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Resolve and set the user type based on selected role
-        ut = _resolve_user_type_code(db, body.role)
-        u.user_type_id = ut.id
+        # Resolve and set the role type based on selected role
+        rt = _resolve_role_type_code(db, body.role)
+        u.role_type_id = rt.id
+        u.role = body.role
         db.add(u)
         db.commit()
         db.refresh(u)
 
-        logger.info("[role_selection_commit] persisted user_type_id=%s for user=%s", ut.id, u.public_id)
+        logger.info("[role_selection_commit] persisted role_type_id=%s for user=%s", rt.id, u.public_id)
         preview = role_selection_preview(body, db)
         logger.info("[role_selection_commit] next_step=%s", preview.next_step)
         return preview

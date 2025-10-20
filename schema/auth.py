@@ -16,6 +16,20 @@ PlanLiteral = Literal[
     "communityAdminVerify",
 ]
 
+RoleLiteral = Literal["buyer","builder","community","community_admin","salesrep","admin"]
+
+class RoleSelectionIn(BaseModel):
+    user_public_id: str
+    role: RoleLiteral
+    org_id: Optional[str] = None
+    selected_plan: Optional[str] = None
+
+class RoleSelectionOut(BaseModel):
+    role: RoleLiteral
+    next_step: Literal["finish","checkout","await_verification"] = "finish"
+    requires_payment: bool = False
+    messages: list[str] = []
+
 class OrgLookupOut(BaseModel):
     is_existing: bool
     existing_active: bool
@@ -23,11 +37,6 @@ class OrgLookupOut(BaseModel):
     org_type: Optional[str] = None
     no_pay: bool
 
-class RoleSelectionIn(BaseModel):
-    user_public_id: str
-    role: Literal["user", "builder", "community"]
-    org_id: Optional[str] = None
-    selected_plan: Optional[PlanLiteral] = None
 
 class UserOutLite(BaseModel):
     public_id: str
@@ -36,15 +45,6 @@ class UserOutLite(BaseModel):
     email: EmailStr
     is_email_verified: bool
     created_at: datetime
-
-class RoleSelectionOut(BaseModel):
-    user: UserOutLite
-    role: str
-    plan_label: Optional[str] = None
-    requires_payment: bool
-    next_step: Literal["finish", "checkout", "await_verification"]
-    messages: List[str]
-    parsed_org: Optional[OrgLookupOut] = None
 
 # --- Role-scoped form payloads ---
 class BuilderForm(BaseModel):

@@ -11,8 +11,8 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from model.base import Base
 
-class UserType(Base):
-    __tablename__ = "user_types"
+class RoleType(Base):
+    __tablename__ = "role_types"
     id = Column(SmallInteger, primary_key=True, autoincrement=True)
     code = Column(String(32), unique=True, nullable=False)
     display_name = Column(String(64), nullable=False)
@@ -26,13 +26,20 @@ class User(Base):
     first_name = Column(String(120), nullable=False)
     last_name = Column(String(120), nullable=False)
     phone_e164 = Column(String(32))
-    user_type_id = Column(SmallInteger, ForeignKey("user_types.id"), nullable=False)
+    role_type_id = Column(SmallInteger, ForeignKey("role_types.id"), nullable=False)
+    onboarding_completed = Column(Boolean, default=False, nullable=False)
+    role = Column(SAEnum("buyer", "builder", "community_admin", "salesrep", "admin", name="user_role"), nullable=True)
     is_email_verified = Column(Boolean, default=False, nullable=False)
     status = Column(SAEnum("active","suspended","deleted", name="user_status"), nullable=False, default="active")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 
-    user_type = relationship("UserType")
+    __table_args__ = (
+        Index("ix_users_role", "role"),
+        Index("ix_users_status", "status"),
+    )
+
+    role_type = relationship("RoleType")
     creds = relationship("UserCredential", uselist=False, back_populates="user")
     buyer_profile = relationship(
         "BuyerProfile",
