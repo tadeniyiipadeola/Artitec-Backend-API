@@ -1,6 +1,6 @@
 # model/profiles/community.py
 from sqlalchemy import (
-    Column, String, Integer, Text, Boolean, ForeignKey, TIMESTAMP, JSON, Float
+    Column, String, Integer, Text, Boolean, ForeignKey, TIMESTAMP, JSON, Float, UniqueConstraint
 )
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
@@ -58,6 +58,10 @@ class Community(Base):
     awards = relationship("CommunityAward", cascade="all, delete-orphan")
     threads = relationship("CommunityTopic", cascade="all, delete-orphan")
     phases = relationship("CommunityPhase", cascade="all, delete-orphan")
+
+    # Admin/profile links
+    profiles = relationship("CommunityProfile", cascade="all, delete-orphan")
+    admin_links = relationship("CommunityAdminLink", cascade="all, delete-orphan")
 
     # Many-to-many: real Builder entities active in this community
     builders = relationship(
@@ -145,3 +149,60 @@ class CommunityPhase(Base):
     name = Column(String(255))
     lots = Column(JSON)  # simplified representation; can expand to a dedicated table later
     map_url = Column(String(1024))
+
+
+class CommunityProfile(Base):
+    """Links a platform User to a specific Community (e.g., community manager).
+    A single user may manage multiple communities; a community may have multiple managers.
+    """
+    __tablename__ = "community_profiles"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.public_id", ondelete="CASCADE"), unique=True, nullable=False)
+
+    title = Column(String(128))
+    bio = Column(Text)
+    socials = Column(JSON)  # {"website": "…", "linkedin": "…"}
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("community_id", "user_id", name="uq_community_profile_user"),
+    )
+
+    # Relationships
+    community = relationship("Community", backref="profile_links", lazy="joined")
+    user = relationship("User", backref="community_links", lazy="joined")
+
+    def __repr__(self):
+        return f"<CommunityProfile(community_id={self.community_id}, user_id={self.user_id})>"
+
+
+class CommunityAdminLink(Base):
+    """Explicit role mapping of a User to a Community with an assigned role.
+    Use this when you need role-specific permissions separate from the profile metadata.
+    """
+    __tablename__ = "community_admin_links"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    role = Column(String(64))          # e.g., "owner", "moderator", "editor"
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("community_id", "user_id", name="uq_community_admin_user"),
+    )
+
+    # Relationships
+    community = relationship("Community", backref="admin_user_links", lazy="joined")
+    user = relationship("User", backref="community_admin_roles", lazy="joined")
+
+    def __repr__(self):
+        return f"<CommunityAdminLink(community_id={self.community_id}, user_id={self.user_id}, role={self.role!r})>"

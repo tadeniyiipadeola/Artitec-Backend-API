@@ -18,15 +18,22 @@ from sqlalchemy.orm import Session
 
 from config.db import get_db
 from model.user import User  # adjust path if user model is elsewhere
-
+# add (or fix) this import at the top with your other imports
+from jose import JWTError, jwt
+import os
+import logging
 # ---------------------------------------------------------------------------
 # JWT CONFIG
 # ---------------------------------------------------------------------------
-SECRET_KEY = "supersecretkey_change_this"  # ⚠️ Replace with environment variable
-ALGORITHM = "HS256"
+from dotenv import load_dotenv
+load_dotenv()
+# Prefer SECRET_KEY, fallback to JWT_SECRET (legacy), and finally a dev default
+SECRET_KEY = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET") or "dev-secret-artitec-key"
+ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/v1/auth/login", auto_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -39,14 +46,31 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def verify_token(token: str) -> Optional[int]:
+# verify_token() expects a JWT created by create_access_token() using the same SECRET_KEY and ALGORITHM
+def verify_token(token: str) -> str:
+    """
+    Decode JWT and return the subject (user id).
+    Raise HTTP 401 for any auth problem.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
+        # Ensure these exist in your module:
+        # SECRET_KEY: str = "..." and ALGORITHM: str = "HS256" (or your algo)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: Optional[int] = payload.get("sub")
-        return int(user_id) if user_id else None
+        user_id = payload.get("sub")
+        if not user_id:
+            raise credentials_exception
+        return user_id
     except JWTError:
-        return None
-
+        # Invalid signature, expired token, or malformed token
+        raise credentials_exception
+    except Exception as e:
+        logging.getLogger("security").warning("JWT decode error: %s", e)
+        raise credentials_exception
 
 # ---------------------------------------------------------------------------
 # DEPENDENCIES
@@ -61,7 +85,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.public_id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -69,7 +93,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
 
 
 def get_current_user_optional(
-    db: Session = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme)
+    db: Session = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme_optional)
 ) -> Optional[User]:
     """Return user if token is valid, otherwise None (no error)."""
     if not token:
@@ -79,4 +103,4 @@ def get_current_user_optional(
     if not user_id:
         return None
 
-    return db.query(User).filter(User.id == user_id).first()
+    return db.query(User).filter(User.public_id == user_id).first()

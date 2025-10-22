@@ -1,5 +1,3 @@
-
-
 # model/profiles/buyer.py
 """
 Buyer domain models aligned with the SwiftUI Buyer Profile page.
@@ -44,11 +42,12 @@ TourStatusEnum = SAEnum(
 class BuyerProfile(Base):
     __tablename__ = "buyer_profiles"
 
-    # One-to-one with users.id
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    # Primary key for buyer profile (used as buyer_profile_id in API)
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    # One-to-one with users.id (unique)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.public_id", ondelete="CASCADE"), unique=True, nullable=False)
 
     # Identity / display
-    public_id = Column(String(64), unique=True, nullable=True)   # optional public handle (UUID/string)
     display_name = Column(String(255), nullable=True)
     avatar_symbol = Column(String(64), nullable=True)            # e.g., SF Symbol name from SwiftUI avatar picker
     bio = Column(Text, nullable=True)
@@ -117,9 +116,9 @@ class BuyerPreference(Base):
 
     __tablename__ = "buyer_preferences"
 
-    user_id = Column(
+    buyer_id = Column(
         MyBIGINT(unsigned=True),
-        ForeignKey("buyer_profiles.user_id", ondelete="CASCADE"),
+        ForeignKey("buyer_profiles.id", ondelete="CASCADE"),
         primary_key=True,
     )
 
@@ -155,7 +154,7 @@ class BuyerPreference(Base):
     profile = relationship("BuyerProfile", back_populates="preferences", lazy="selectin")
 
     def __repr__(self):
-        return f"<BuyerPreference(user_id={self.user_id}, price=[{self.price_min},{self.price_max}])>"
+        return f"<BuyerPreference(buyer_id={self.buyer_id}, price=[{self.price_min},{self.price_max}])>"
 
 
 # ----------------------------- BuyerTour ------------------------------------
@@ -167,9 +166,9 @@ class BuyerTour(Base):
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
 
     # owner (1 buyer per tour)
-    user_id = Column(
+    buyer_id = Column(
         MyBIGINT(unsigned=True),
-        ForeignKey("buyer_profiles.user_id", ondelete="CASCADE"),
+        ForeignKey("buyer_profiles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -204,7 +203,7 @@ class BuyerTour(Base):
     property = relationship("Property", lazy="selectin")
 
     def __repr__(self):
-        return f"<BuyerTour(id={self.id}, user_id={self.user_id}, property_id={self.property_id}, status={self.status})>"
+        return f"<BuyerTour(id={self.id}, buyer_id={self.buyer_id}, property_id={self.property_id}, status={self.status})>"
 
 
 # ---------------------------- BuyerDocument ---------------------------------
@@ -219,9 +218,9 @@ class BuyerDocument(Base):
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
 
     # owner (ties to buyer profile)
-    user_id = Column(
+    buyer_id = Column(
         MyBIGINT(unsigned=True),
-        ForeignKey("buyer_profiles.user_id", ondelete="CASCADE"),
+        ForeignKey("buyer_profiles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -255,7 +254,7 @@ class BuyerDocument(Base):
     property = relationship("Property", lazy="selectin")
 
     def __repr__(self):
-        return f"<BuyerDocument(id={self.id}, user_id={self.user_id}, filename={self.filename!r})>"
+        return f"<BuyerDocument(id={self.id}, buyer_id={self.buyer_id}, filename={self.filename!r})>"
 
 
 # ----------------------------- TourStatus -----------------------------------

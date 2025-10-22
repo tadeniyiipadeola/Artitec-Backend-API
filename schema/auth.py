@@ -19,7 +19,7 @@ PlanLiteral = Literal[
 RoleLiteral = Literal["buyer","builder","community","community_admin","salesrep","admin"]
 
 class RoleSelectionIn(BaseModel):
-    user_public_id: str
+    public_id: str
     role: RoleLiteral
     org_id: Optional[str] = None
     selected_plan: Optional[str] = None
@@ -49,7 +49,7 @@ class UserOutLite(BaseModel):
 # --- Role-scoped form payloads ---
 class BuilderForm(BaseModel):
     role: Literal["builder"] = "builder"
-    user_public_id: str
+    public_id: str
     company_name: str
     enterprise_number: Optional[str] = None
     company_address: Optional[str] = None
@@ -59,7 +59,7 @@ class BuilderForm(BaseModel):
 
 class CommunityForm(BaseModel):
     role: Literal["community"] = "community"
-    user_public_id: str
+    public_id: str
     community_name: str
     community_address: Optional[str] = None
     city: str
@@ -69,7 +69,7 @@ class CommunityForm(BaseModel):
 
 class CommunityAdminForm(BaseModel):
     role: Literal["communityAdmin"] = "communityAdmin"
-    user_public_id: str
+    public_id: str
     first_name: str
     last_name: str
     email: Optional[EmailStr] = None
@@ -80,7 +80,7 @@ class CommunityAdminForm(BaseModel):
 
 class SalesRepForm(BaseModel):
     role: Literal["salesRep"] = "salesRep"
-    user_public_id: str
+    public_id: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     address: Optional[str] = None
@@ -96,7 +96,7 @@ class SalesRepForm(BaseModel):
 
 class BuyerForm(BaseModel):
     role: Literal["buyer"] = "buyer"
-    user_public_id: str
+    public_id: str
     first_name: str
     last_name: str
     email: EmailStr

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from routes.auth import router as auth_router
+from routes.user import router as user_router
 from routes.profiles import buyers, builder, community
 from routes.property import property
 
@@ -61,7 +62,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["Authentication"])
-# app.include_router(buyerForms.router, prefix="/v1/buyer-forms", tags=["Buyer Forms"])
+app.include_router(user_router, prefix="/v1/users", tags=["Users"])
 app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
 app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
