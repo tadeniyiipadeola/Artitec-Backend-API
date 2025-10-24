@@ -18,7 +18,7 @@ from schema.property import (
 
 # Models (SQLAlchemy)
 from model.property.property import Property  # correct import path
-from model.user import User
+from model.user import Users
 
 # Optional models (only used if present in your codebase)
 try:  # favorites/saves are optional; guarded to avoid import errors if not yet created
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/v1/properties", tags=["Properties"])
 def create_property(
     payload: PropertyCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Users = Depends(get_current_user),
 ):
     """Create a new property listing owned by the current user."""
     prop = Property(**payload.model_dump(exclude_none=True), owner_id=current_user.id)
@@ -156,7 +156,7 @@ def update_property(
     property_id: int,
     payload: PropertyUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Users = Depends(get_current_user),
 ):
     prop = db.query(Property).filter(Property.id == property_id).first()
     if not prop:
@@ -181,7 +181,7 @@ def update_property(
 def delete_property(
     property_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: Users = Depends(get_current_user),
 ):
     prop = db.query(Property).filter(Property.id == property_id).first()
     if not prop:
@@ -203,7 +203,7 @@ if FavoriteProperty is not None:  # type: ignore
     def toggle_favorite_property(
         property_id: int,
         db: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
+        current_user: Users = Depends(get_current_user),
     ):
         prop = db.query(Property).filter(Property.id == property_id).first()
         if not prop:
@@ -230,7 +230,7 @@ if FavoriteProperty is not None:  # type: ignore
     @router.get("/me/favorites", response_model=List[PropertyOut])
     def list_my_favorite_properties(
         db: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
+        current_user: Users = Depends(get_current_user),
     ):
         # Join FavoriteProperty -> Property
         subq = (

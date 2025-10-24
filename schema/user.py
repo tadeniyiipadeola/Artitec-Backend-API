@@ -7,14 +7,17 @@ from pydantic import BaseModel, EmailStr
 
 class Users(BaseModel):
     public_id: str
-    username: str
+    email: EmailStr
     first_name: str
     last_name: str
-    email: EmailStr
-    role: str
-    role_id: Optional[int] = None
+    phone_e164: Optional[str] = None
+    role_type_id: int
+    onboarding_completed: bool = False
+    role: Optional[str] = None  # buyer, builder, community_admin, salesrep, admin
     is_email_verified: bool = False
-    onboarding_complete: bool = False
+    status: Optional[str] = "active"  # active, suspended, deleted
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
 
 
 class UserCreate(Users):

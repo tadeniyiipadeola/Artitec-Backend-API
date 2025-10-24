@@ -116,7 +116,7 @@ class BuilderProfile(Base):
     )
 
     # Relationships
-    user = relationship("User", backref="builder", lazy="joined", uselist=False)
+    user = relationship("Users", backref="builder", lazy="joined", uselist=False)
     sales_reps = relationship("SalesRep", back_populates="builder", cascade="all, delete-orphan")
 
     # Many-to-many relationships

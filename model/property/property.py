@@ -47,7 +47,7 @@ class Property(Base):
     year_built = Column(Integer)
 
     # Associations / flags
-    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builders.id", ondelete="SET NULL"), nullable=True)
+    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="SET NULL"), nullable=True)
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="SET NULL"), nullable=True)
     has_pool = Column(Boolean, default=False)
 
@@ -67,14 +67,14 @@ class Property(Base):
     # Relationships
     # Many-to-many with builders via portfolio (collection of builders who built this property)
     builders = relationship(
-        "Builder",
+        "BuilderProfile",
         secondary=builder_portfolio,
         back_populates="properties",
         lazy="selectin",
     )
 
     # Optional direct relations (primary builder/community, if applicable)
-    primary_builder = relationship("Builder", foreign_keys=[builder_id], lazy="selectin", viewonly=True)
+    primary_builder = relationship("BuilderProfile", foreign_keys=[builder_id], lazy="selectin", viewonly=True)
     community = relationship("Community", foreign_keys=[community_id], lazy="selectin", viewonly=True)
 
     def __repr__(self):
@@ -93,5 +93,5 @@ class FavoriteProperty(Base):
 
     # Basic relationships (not strictly necessary for the router but helpful)
     # Using lazy='selectin' to avoid N+1 queries in list endpoints
-    user = relationship("User", lazy="selectin")
+    user = relationship("Users", lazy="selectin")
     property = relationship("Property", lazy="selectin")

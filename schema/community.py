@@ -6,7 +6,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional, Any
 
-from pydantic import BaseModel, constr, conint
+from pydantic import BaseModel, constr, conint, Field
+
+# Pydantic v2/v1 compatibility for from_attributes/orm_mode
+try:
+    from pydantic import ConfigDict  # Pydantic v2
+    _HAS_V2 = True
+except Exception:  # Pydantic v1 fallback
+    _HAS_V2 = False
 
 
 # ------------------------------------------------------------
@@ -30,8 +37,11 @@ class CommunityAmenityOut(CommunityAmenityBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 class CommunityEventBase(BaseModel):
@@ -54,8 +64,11 @@ class CommunityEventOut(CommunityEventBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 class CommunityBuilderCardBase(BaseModel):
@@ -82,8 +95,11 @@ class CommunityBuilderCardOut(CommunityBuilderCardBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 class CommunityAdminBase(BaseModel):
@@ -108,8 +124,11 @@ class CommunityAdminOut(CommunityAdminBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 class CommunityAwardBase(BaseModel):
@@ -136,8 +155,11 @@ class CommunityAwardOut(CommunityAwardBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 class CommunityTopicBase(BaseModel):
@@ -166,8 +188,11 @@ class CommunityTopicOut(CommunityTopicBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 class CommunityPhaseBase(BaseModel):
@@ -190,8 +215,11 @@ class CommunityPhaseOut(CommunityPhaseBase):
     id: int
     community_id: int
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True
 
 
 # ------------------------------------------------------------
@@ -260,16 +288,19 @@ class CommunityOut(CommunityBase):
     updated_at: datetime
 
     # Nested relationships (1-to-many)
-    amenities: List[CommunityAmenityOut] = []
-    events: List[CommunityEventOut] = []
-    builder_cards: List[CommunityBuilderCardOut] = []
-    admins: List[CommunityAdminOut] = []
-    awards: List[CommunityAwardOut] = []
-    threads: List[CommunityTopicOut] = []
-    phases: List[CommunityPhaseOut] = []
+    amenities: List[CommunityAmenityOut] = Field(default_factory=list)
+    events: List[CommunityEventOut] = Field(default_factory=list)
+    builder_cards: List[CommunityBuilderCardOut] = Field(default_factory=list)
+    admins: List[CommunityAdminOut] = Field(default_factory=list)
+    awards: List[CommunityAwardOut] = Field(default_factory=list)
+    threads: List[CommunityTopicOut] = Field(default_factory=list)
+    phases: List[CommunityPhaseOut] = Field(default_factory=list)
 
     # Many-to-many builder link exposure by ID (optional; hydrate in route layer)
-    builder_ids: List[int] = []
+    builder_ids: List[int] = Field(default_factory=list)
 
-    class Config:
-        orm_mode = True
+    if _HAS_V2:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:
+            orm_mode = True

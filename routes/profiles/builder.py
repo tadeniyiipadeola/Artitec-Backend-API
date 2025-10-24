@@ -18,7 +18,7 @@ from typing import List, Optional, Sequence, Set
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, selectinload
-from model.profiles.builder import Builder as BuilderModel
+from model.profiles.builder import BuilderProfile as BuilderModel
 from config.db import get_db
 from config.security import get_current_user_optional
 

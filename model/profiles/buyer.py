@@ -83,7 +83,7 @@ class BuyerProfile(Base):
     )
 
     # Relationships
-    user = relationship("User", back_populates="buyer_profile", lazy="selectin")
+    user = relationship("Users", back_populates="buyer_profile", lazy="selectin")
     preferences = relationship(
         "BuyerPreference",
         back_populates="profile",

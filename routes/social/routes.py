@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-from core.db import get_db
+from config.db import get_db
 from schema.social import PostCreate, PostResponse, CommentCreate, CommentResponse
 from model.social import Post, Comment, Like, Follow
-from core.security import get_current_user
-from model.user import User
+from config.security import get_current_user
+from model.user import Users
 
 router = APIRouter(
     prefix="/v1/social",
@@ -18,7 +18,7 @@ router = APIRouter(
 # --------------------------
 
 @router.post("/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
-def create_post(payload: PostCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_post(payload: PostCreate, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
     """Create a new post."""
     post = Post(
         user_id=current_user.id,
@@ -48,7 +48,7 @@ def get_post(post_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_post(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_post(post_id: int, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
     """Delete a post."""
     post = db.query(Post).filter(Post.id == post_id, Post.user_id == current_user.id).first()
     if not post:
@@ -63,7 +63,7 @@ def delete_post(post_id: int, db: Session = Depends(get_db), current_user: User 
 # --------------------------
 
 @router.post("/posts/{post_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
-def create_comment(post_id: int, payload: CommentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_comment(post_id: int, payload: CommentCreate, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
     """Comment on a post."""
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
@@ -91,7 +91,7 @@ def list_comments(post_id: int, db: Session = Depends(get_db)):
 # --------------------------
 
 @router.post("/posts/{post_id}/like", status_code=status.HTTP_200_OK)
-def like_post(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def like_post(post_id: int, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
     """Like or unlike a post."""
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
@@ -115,7 +115,7 @@ def like_post(post_id: int, db: Session = Depends(get_db), current_user: User = 
 # --------------------------
 
 @router.post("/users/{user_id}/follow", status_code=status.HTTP_200_OK)
-def follow_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def follow_user(user_id: int, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
     """Follow or unfollow a user."""
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You cannot follow yourself")

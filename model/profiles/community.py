@@ -60,12 +60,15 @@ class Community(Base):
     phases = relationship("CommunityPhase", cascade="all, delete-orphan")
 
     # Admin/profile links
-    profiles = relationship("CommunityProfile", cascade="all, delete-orphan")
-    admin_links = relationship("CommunityAdminLink", cascade="all, delete-orphan")
+    admin_links = relationship(
+        "CommunityAdminLink",
+        back_populates="community",
+        cascade="all, delete-orphan",
+    )
 
     # Many-to-many: real Builder entities active in this community
     builders = relationship(
-        "Builder",
+        "BuilderProfile",
         secondary=builder_communities,
         back_populates="communities",
         lazy="selectin",
@@ -151,35 +154,6 @@ class CommunityPhase(Base):
     map_url = Column(String(1024))
 
 
-class CommunityProfile(Base):
-    """Links a platform User to a specific Community (e.g., community manager).
-    A single user may manage multiple communities; a community may have multiple managers.
-    """
-    __tablename__ = "community_profiles"
-
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.public_id", ondelete="CASCADE"), unique=True, nullable=False)
-
-    title = Column(String(128))
-    bio = Column(Text)
-    socials = Column(JSON)  # {"website": "…", "linkedin": "…"}
-
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint("community_id", "user_id", name="uq_community_profile_user"),
-    )
-
-    # Relationships
-    community = relationship("Community", backref="profile_links", lazy="joined")
-    user = relationship("User", backref="community_links", lazy="joined")
-
-    def __repr__(self):
-        return f"<CommunityProfile(community_id={self.community_id}, user_id={self.user_id})>"
-
-
 class CommunityAdminLink(Base):
     """Explicit role mapping of a User to a Community with an assigned role.
     Use this when you need role-specific permissions separate from the profile metadata.
@@ -201,8 +175,12 @@ class CommunityAdminLink(Base):
     )
 
     # Relationships
-    community = relationship("Community", backref="admin_user_links", lazy="joined")
-    user = relationship("User", backref="community_admin_roles", lazy="joined")
+    community = relationship(
+        "Community",
+        back_populates="admin_links",
+        lazy="joined",
+    )
+    user = relationship("Users", backref="community_admin_roles", lazy="joined")
 
     def __repr__(self):
         return f"<CommunityAdminLink(community_id={self.community_id}, user_id={self.user_id}, role={self.role!r})>"

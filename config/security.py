@@ -17,7 +17,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from config.db import get_db
-from model.user import User  # adjust path if user model is elsewhere
+from model.user import Users  # adjust path if user model is elsewhere
 # add (or fix) this import at the top with your other imports
 from jose import JWTError, jwt
 import os
@@ -75,7 +75,7 @@ def verify_token(token: str) -> str:
 # ---------------------------------------------------------------------------
 # DEPENDENCIES
 # ---------------------------------------------------------------------------
-def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> User:
+def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> Users:
     """Require valid JWT and return the user."""
     user_id = verify_token(token)
     if not user_id:
@@ -85,7 +85,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(User).filter(User.public_id == user_id).first()
+    user = db.query(Users).filter(Users.public_id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -94,7 +94,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
 
 def get_current_user_optional(
     db: Session = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme_optional)
-) -> Optional[User]:
+) -> Optional[Users]:
     """Return user if token is valid, otherwise None (no error)."""
     if not token:
         return None
@@ -103,4 +103,4 @@ def get_current_user_optional(
     if not user_id:
         return None
 
-    return db.query(User).filter(User.public_id == user_id).first()
+    return db.query(Users).filter(Users.public_id == user_id).first()

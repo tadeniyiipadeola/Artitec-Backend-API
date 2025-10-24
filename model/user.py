@@ -26,7 +26,6 @@ class RoleType(Base):
     id = Column(SmallInteger, primary_key=True, autoincrement=True)
     code = Column(SmallInteger, unique=True, index=True, nullable=False)
     display_name = Column(String(64), nullable=False)
-    users = relationship("Users", back_populates="role_type")
 
 
 class Users(Base):
@@ -40,6 +39,7 @@ class Users(Base):
     phone_e164 = Column(String(32))
     role_type_id = Column(SmallInteger, ForeignKey("role_types.id"), nullable=False)
     onboarding_completed = Column(Boolean, default=False, nullable=False)
+    role = Column(SAEnum("buyer", "builder", "community_admin", "salesrep", "admin", name="user_role"), nullable=True)
     is_email_verified = Column(Boolean, default=False, nullable=False)
     status = Column(SAEnum("active", "suspended", "deleted", name="user_status"), nullable=False, default="active")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
@@ -50,48 +50,9 @@ class Users(Base):
         Index("ix_users_status", "status"),
     )
 
-    role_type = relationship("RoleType", back_populates="users")
+    role_type = relationship("RoleType")
     creds = relationship("UserCredential", uselist=False, back_populates="user")
-
-    @property
-    def role(self) -> RoleEnum | None:
-        if self.role_type_id is None or self.role_type is None:
-            return None
-        try:
-            return RoleEnum(self.role_type.code)
-        except Exception:
-            return None
-
-    @role.setter
-    def role(self, value: RoleEnum | int | str | None):
-        """Setter to update role via enum/int/str. Stores only the FK to RoleType.
-        Accepts RoleEnum, its underlying int, or one of the strings: buyer, builder, community_admin, salesrep, admin.
-        """
-        if value is None:
-            self.role_type_id = None
-            return
-
-        # Normalize to integer code
-        if isinstance(value, RoleEnum):
-            code = int(value)
-        elif isinstance(value, int):
-            code = value
-        elif isinstance(value, str):
-            mapping = {
-                "buyer": 1,
-                "builder": 2,
-                "community_admin": 3,
-                "salesrep": 4,
-                "admin": 5,
-            }
-            code = mapping.get(value)
-            if code is None:
-                raise ValueError(f"Unknown role string: {value}")
-        else:
-            raise TypeError("role must be RoleEnum, int, str, or None")
-
-        # Assign by FK; the calling service should ensure a RoleType with this code exists
-        self.role_type_id = code
+    buyer_profile = relationship("BuyerProfile", back_populates="user", uselist=False)
 
 
 class UserCredential(Base):

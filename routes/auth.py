@@ -7,13 +7,13 @@ import logging
 
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
-from model.user import User, UserCredential, EmailVerification, SessionToken, RoleType
+from model.user import Users, UserCredential, EmailVerification, SessionToken, RoleType
 from schema.auth import (
     OrgLookupOut, RoleSelectionIn, RoleSelectionOut,
     RoleForm, FormPreviewOut, FormCommitOut, PlanLiteral,
     BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm,
 )
-from schema.schemas import RegisterIn, LoginIn, AuthOut, UserOut
+from src.schemas import RegisterIn, LoginIn, AuthOut, UserOut
 from src.utils import gen_public_id, gen_token_hex, hash_password, verify_password, make_access_token
 
 
@@ -56,7 +56,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         )
 
     logger.debug("Checking if email already exists: %s", body.email)
-    if db.query(User).filter(User.email == body.email).first():
+    if db.query(Users).filter(Users.email == body.email).first():
         logger.warning("Email already in use: %s", body.email)
         raise HTTPException(status_code=409, detail="Email already in use")
 
@@ -66,7 +66,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         logger.warning("Passwords do not match for email=%s", body.email)
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
-    u = User(
+    u = Users(  
         public_id=gen_public_id(),
         email=body.email,
         first_name=body.first_name,
@@ -136,7 +136,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Login attempt for email=%s", body.email)
     logger.debug("Handling /login request body: %s", body.dict(exclude={'password'}))
-    u = db.query(User).filter(User.email == body.email, User.status == "active").one_or_none()
+    u = db.query(Users).filter(Users.email == body.email, Users.status == "active").one_or_none()
     if not u or not u.creds or not verify_password(body.password, u.creds.password_hash):
         logger.warning("Invalid login attempt for email=%s", body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -323,7 +323,7 @@ def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db))
             raise HTTPException(status_code=422, detail="Unknown role.")
 
         # Load the user for the response
-        u = db.query(User).filter(User.public_id == body.user_public_id).one_or_none()
+        u = db.query(Users).filter(Users.public_id == body.user_public_id).one_or_none()
         if not u:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -367,7 +367,7 @@ def role_selection_commit(body: RoleSelectionIn, db: Session = Depends(get_db)):
         parsed = _parse_org_id(body.org_id)
 
         # Find the user by public_id
-        u = db.query(User).filter(User.public_id == body.user_public_id).one_or_none()
+        u = db.query(Users).filter(Users.public_id == body.user_public_id).one_or_none()
         if not u:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -483,7 +483,7 @@ def role_form_commit(body: RoleForm, db: Session = Depends(get_db)):
     try:
         logger.debug("[role_form_commit] in: user=%s role=%s",
                      getattr(body, 'user_public_id', None), getattr(body, 'role', None))
-        u = db.query(User).filter(User.public_id == body.user_public_id).one_or_none()
+        u = db.query(Users).filter(Users.public_id == body.user_public_id).one_or_none()
         if not u:
             logger.warning("[role_form_commit] user not found: %s", body.user_public_id)
             raise HTTPException(status_code=404, detail="User not found")

@@ -1,26 +1,35 @@
 # routes/profiles/buyers.py
 from __future__ import annotations
-from typing import List, Optional, Literal
-from datetime import datetime
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-# Project imports (adjust paths if your app structure differs)
-from config.db import get_db  # expects a Dependency that yields a SQLAlchemy Session
-from model.profiles.buyer import BuyerProfile, BuyerTour, BuyerDocument, TourStatus, FinancingStatus, LoanProgram, BuyingTimeline, PreferredChannel
-from model.user import User
-from schema.buyers import BuyerProfileIn, BuyerProfileOut, TourIn, TourOut, DocumentIn, DocumentOut
+from config.db import get_db
+from model.profiles.buyer import BuyerProfile, BuyerTour, BuyerDocument
+from model.user import Users
+from schema.buyers import (
+    BuyerProfileIn, BuyerProfileOut,
+    BuyerTourIn as TourIn, BuyerTourOut as TourOut,
+    BuyerDocumentIn as DocumentIn, BuyerDocumentOut as DocumentOut,
+)
 
 router = APIRouter() 
 
 # ---------- Helpers ----------
 
-def _ensure_user(db: Session, user_id: int) -> User:
-    user = db.query(User).filter(User.id == user_id).first()
+def _ensure_user(db: Session, user_id: int) -> Users:
+    user = db.query(Users).filter(Users.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
+
+# Resolve buyer_id (BuyerProfile.id) from a given users.id
+def _resolve_buyer_id(db: Session, user_id: int) -> int:
+    prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == user_id).first()
+    if not prof:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
+    return int(prof.id)
 
 # ---------- Routes: Buyer Profile ----------
 
@@ -46,16 +55,17 @@ def create_buyer_profile(user_id: int, payload: BuyerProfileIn, db: Session = De
         location=payload.location,
         bio=payload.bio,
         sex=payload.sex,
-        contact_email=payload.contact.email if payload.contact else None,
-        contact_phone=payload.contact.phone if payload.contact else None,
-        contact_preferred=payload.contact.preferred if payload.contact else "email",
-        timeline=payload.timeline,
-        financing_status=(payload.finance.financing_status if payload.finance else "unknown"),
-        loan_program=(payload.finance.loan_program if payload.finance else None),
-        budget_max_usd=(payload.finance.budget_max_usd if payload.finance else None),
-        down_payment_percent=(payload.finance.down_payment_percent if payload.finance else None),
-        lender_name=(payload.finance.lender_name if payload.finance else None),
-        agent_name=(payload.finance.agent_name if payload.finance else None),
+        contact_email=payload.contact_email,
+        contact_phone=payload.contact_phone,
+        contact_preferred=(payload.contact_preferred or "email"),
+        timeline=(payload.timeline or "exploring"),
+        financing_status=(payload.financing_status or "unknown"),
+        loan_program=payload.loan_program,
+        budget_max_usd=payload.budget_max_usd,
+        down_payment_percent=payload.down_payment_percent,
+        lender_name=payload.lender_name,
+        agent_name=payload.agent_name,
+        extra=payload.extra,
     )
     db.add(prof)
     db.commit()
@@ -69,30 +79,8 @@ def update_buyer_profile(user_id: int, payload: BuyerProfileIn, db: Session = De
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
 
-    # Partial update
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        if field == "contact" and value is not None:
-            if "email" in value:
-                prof.contact_email = value["email"]
-            if "phone" in value:
-                prof.contact_phone = value["phone"]
-            if "preferred" in value and value["preferred"] is not None:
-                prof.contact_preferred = value["preferred"]
-            continue
-        if field == "finance" and value is not None:
-            if "financing_status" in value and value["financing_status"] is not None:
-                prof.financing_status = value["financing_status"]
-            if "loan_program" in value:
-                prof.loan_program = value["loan_program"]
-            if "budget_max_usd" in value:
-                prof.budget_max_usd = value["budget_max_usd"]
-            if "down_payment_percent" in value:
-                prof.down_payment_percent = value["down_payment_percent"]
-            if "lender_name" in value:
-                prof.lender_name = value["lender_name"]
-            if "agent_name" in value:
-                prof.agent_name = value["agent_name"]
-            continue
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
         setattr(prof, field, value)
 
     db.add(prof)
@@ -105,18 +93,22 @@ def update_buyer_profile(user_id: int, payload: BuyerProfileIn, db: Session = De
 @router.get("/{user_id}/tours", response_model=List[TourOut])
 def list_tours(user_id: int, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
-    q = db.query(BuyerTour).filter(BuyerTour.user_id == user_id).order_by(BuyerTour.created_at.desc())
+    buyer_id = _resolve_buyer_id(db, user_id)
+    q = db.query(BuyerTour).filter(BuyerTour.buyer_id == buyer_id).order_by(BuyerTour.created_at.desc())
     return q.all()
 
 @router.post("/{user_id}/tours", response_model=TourOut, status_code=status.HTTP_201_CREATED)
 def create_tour(user_id: int, payload: TourIn, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
+    buyer_id = _resolve_buyer_id(db, user_id)
     tour = BuyerTour(
-        user_id=user_id,
-        property_public_id=payload.property_public_id,
-        status=payload.status,
-        notes=payload.notes,
-        preferred_slots=[s.model_dump() for s in (payload.preferred_slots or [])]
+        buyer_id=buyer_id,
+        property_id=payload.property_id,  # if you support public_id resolution, do it here
+        scheduled_at=payload.scheduled_at,
+        status=(payload.status or "requested"),
+        note=payload.note,
+        agent_name=payload.agent_name,
+        agent_phone=payload.agent_phone,
     )
     db.add(tour)
     db.commit()
@@ -126,19 +118,14 @@ def create_tour(user_id: int, payload: TourIn, db: Session = Depends(get_db)):
 @router.patch("/{user_id}/tours/{tour_id}", response_model=TourOut)
 def update_tour(user_id: int, tour_id: int, payload: TourIn, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
-    tour = db.query(BuyerTour).filter(BuyerTour.id == tour_id, BuyerTour.user_id == user_id).first()
+    buyer_id = _resolve_buyer_id(db, user_id)
+    tour = db.query(BuyerTour).filter(BuyerTour.id == tour_id, BuyerTour.buyer_id == buyer_id).first()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
 
     data = payload.model_dump(exclude_unset=True)
-    if "preferred_slots" in data:
-        tour.preferred_slots = [s.model_dump() for s in (payload.preferred_slots or [])]
-    if "status" in data and data["status"] is not None:
-        tour.status = data["status"]
-    if "notes" in data:
-        tour.notes = data["notes"]
-    if "property_public_id" in data:
-        tour.property_public_id = data["property_public_id"]
+    for field, value in data.items():
+        setattr(tour, field, value)
 
     db.add(tour)
     db.commit()
@@ -148,7 +135,8 @@ def update_tour(user_id: int, tour_id: int, payload: TourIn, db: Session = Depen
 @router.delete("/{user_id}/tours/{tour_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_tour(user_id: int, tour_id: int, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
-    tour = db.query(BuyerTour).filter(BuyerTour.id == tour_id, BuyerTour.user_id == user_id).first()
+    buyer_id = _resolve_buyer_id(db, user_id)
+    tour = db.query(BuyerTour).filter(BuyerTour.id == tour_id, BuyerTour.buyer_id == buyer_id).first()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
     db.delete(tour)
@@ -160,17 +148,22 @@ def delete_tour(user_id: int, tour_id: int, db: Session = Depends(get_db)):
 @router.get("/{user_id}/documents", response_model=List[DocumentOut])
 def list_documents(user_id: int, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
-    q = db.query(BuyerDocument).filter(BuyerDocument.user_id == user_id).order_by(BuyerDocument.uploaded_at.desc())
+    buyer_id = _resolve_buyer_id(db, user_id)
+    q = db.query(BuyerDocument).filter(BuyerDocument.buyer_id == buyer_id).order_by(BuyerDocument.created_at.desc())
     return q.all()
 
 @router.post("/{user_id}/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 def create_document(user_id: int, payload: DocumentIn, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
+    buyer_id = _resolve_buyer_id(db, user_id)
     doc = BuyerDocument(
-        user_id=user_id,
-        kind=payload.kind,
-        name=payload.name,
+        buyer_id=buyer_id,
+        property_id=payload.property_id,
+        filename=payload.filename,
         file_url=payload.file_url,
+        mime_type=payload.mime_type,
+        size_bytes=payload.size_bytes,
+        note=payload.note,
     )
     db.add(doc)
     db.commit()
@@ -180,7 +173,8 @@ def create_document(user_id: int, payload: DocumentIn, db: Session = Depends(get
 @router.delete("/{user_id}/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(user_id: int, doc_id: int, db: Session = Depends(get_db)):
     _ensure_user(db, user_id)
-    doc = db.query(BuyerDocument).filter(BuyerDocument.id == doc_id, BuyerDocument.user_id == user_id).first()
+    buyer_id = _resolve_buyer_id(db, user_id)
+    doc = db.query(BuyerDocument).filter(BuyerDocument.id == doc_id, BuyerDocument.buyer_id == buyer_id).first()
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     db.delete(doc)
