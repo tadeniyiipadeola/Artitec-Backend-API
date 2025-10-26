@@ -1,5 +1,4 @@
 # model/user.py
-from datetime import datetime
 from sqlalchemy import (
     Column, String, BigInteger, SmallInteger, Boolean, CHAR,
     TIMESTAMP, ForeignKey, Index, DateTime as SADateTime
@@ -21,19 +20,24 @@ class Users(Base):
     last_name = Column(String(120), nullable=False)
     phone_e164 = Column(String(32))
     role_id = Column(SmallInteger, ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
-    onboarding_completed = Column(Boolean, default=False, nullable=False)
-    is_email_verified = Column(Boolean, default=False, nullable=False)
-    status = Column(SAEnum("active", "suspended", "deleted", name="user_status"), nullable=False, default="active")
+    onboarding_completed = Column(Boolean, server_default="0", nullable=False)
+    is_email_verified = Column(Boolean, server_default="0", nullable=False)
+    plan_tier = Column(SAEnum("free", "pro", "enterprise", name="plan_tier"), nullable=False, server_default="free")
+    status = Column(SAEnum("active", "suspended", "deleted", name="user_status"), nullable=False, server_default="active")
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 
     __table_args__ = (
         Index("ix_users_status", "status"),
+        Index("ix_users_plan_tier", "plan_tier"),
+        Index("ix_users_created_at", "created_at"),
     )
 
     role = relationship("Role", back_populates="users")
     creds = relationship("UserCredential", uselist=False, back_populates="user", passive_deletes=True)
     buyer_profile = relationship("BuyerProfile", back_populates="user", uselist=False)
+    sessions = relationship("SessionToken", backref="user", passive_deletes=True)
+    email_verifications = relationship("EmailVerification", backref="user", passive_deletes=True)
 
 
 class UserCredential(Base):
@@ -82,3 +86,6 @@ class Role(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 
     users = relationship("Users", back_populates="role")
+__table_args__ = (
+    Index("ix_sessions_user_id", "user_id"),
+)

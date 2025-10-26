@@ -11,8 +11,19 @@ class RoleOut(BaseModel):
     name: str
 
 # Request model for updating a user's role
+
 class UserRoleUpdate(BaseModel):
     role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
+    model_config = ConfigDict(json_schema_extra={
+        "example": {"role": "buyer"}
+    })
+
+# Request model for updating a user's tier
+class TierUpdate(BaseModel):
+    tier: Literal["free", "pro", "enterprise"]
+    model_config = ConfigDict(json_schema_extra={
+        "example": {"tier": "pro"}
+    })
 
 class RegisterIn(BaseModel):
     first_name: str
@@ -46,11 +57,13 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
+    phone_e164: Optional[str] = None
     role: Optional[RoleOut] = None
-    buyer_profile_id: Optional[int] = None
     is_email_verified: bool
     onboarding_completed: bool = False
+    plan_tier: Optional[Literal["free", "pro", "enterprise"]] = "free"
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -91,6 +104,14 @@ class RoleSelectionIn(BaseModel):
     role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     org_id: Optional[str] = None
     selected_plan: Optional[PlanLiteral] = None
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "user_public_id": "f1b5e2f0-1234-4c9c-9a88-0b2e4dbbe123",
+            "role": "buyer",
+            "org_id": None,
+            "selected_plan": "userFree"
+        }
+    })
 
 class RoleSelectionOut(BaseModel):
     user: UserOut
@@ -100,6 +121,28 @@ class RoleSelectionOut(BaseModel):
     next_step: Literal["finish", "checkout", "await_verification"]
     messages: List[str]
     parsed_org: Optional[OrgLookupOut] = None
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "user": {
+                "public_id": "f1b5e2f0-1234-4c9c-9a88-0b2e4dbbe123",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "email": "user@example.com",
+                "role": {"key": "buyer", "name": "Buyer"},
+                "is_email_verified": True,
+                "onboarding_completed": False,
+                "plan_tier": "free",
+                "created_at": "2025-01-01T12:00:00Z",
+                "updated_at": "2025-01-02T12:00:00Z"
+            },
+            "role": {"key": "buyer", "name": "Buyer"},
+            "plan_label": "Free Plan",
+            "requires_payment": False,
+            "next_step": "finish",
+            "messages": [],
+            "parsed_org": None
+        }
+    })
 
 # =============================
 # Step 3: Role-Based Forms (Preview & Commit)
@@ -192,9 +235,26 @@ class FormPreviewOut(BaseModel):
     missing: Dict[str, str] = PydField(default_factory=dict)
     suggestions: List[str] = PydField(default_factory=list)
     next_step: Literal["finish", "await_verification", "review"]
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "role": "buyer",
+            "valid": True,
+            "missing": {},
+            "suggestions": [],
+            "next_step": "finish"
+        }
+    })
 
 class FormCommitOut(BaseModel):
     role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     saved: bool
     messages: List[str]
     next_step: Literal["finish", "await_verification"]
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "role": "buyer",
+            "saved": True,
+            "messages": ["Saved"],
+            "next_step": "finish"
+        }
+    })

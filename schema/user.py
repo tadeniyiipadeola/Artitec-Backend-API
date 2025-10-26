@@ -1,34 +1,34 @@
-
-
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, EmailStr
+from src.schemas import RoleOut
 
 
-class Users(BaseModel):
+class UserBase(BaseModel):
     public_id: str
     email: EmailStr
     first_name: str
     last_name: str
     phone_e164: Optional[str] = None
-    role_type_id: int
+    role_id: Optional[int] = None
     onboarding_completed: bool = False
-    role: Optional[str] = None  # buyer, builder, community_admin, salesrep, admin
+    role: Optional[RoleOut] = None
+    plan_tier: Optional[str] = "free"  # free, pro, enterprise
     is_email_verified: bool = False
     status: Optional[str] = "active"  # active, suspended, deleted
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
 
-class UserCreate(Users):
+class UserCreate(UserBase):
     password: str
 
 
-class UserUpdate(Users):
+class UserUpdate(UserBase):
     password: Optional[str] = None
 
 
-class UserOut(Users):
+class UserOut(UserBase):
     public_id: Optional[int]
     created_at: Optional[datetime]
 
