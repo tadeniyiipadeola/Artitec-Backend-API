@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from src.schemas import RoleOut
 
 
@@ -29,8 +29,6 @@ class UserUpdate(UserBase):
 
 
 class UserOut(UserBase):
-    public_id: Optional[int]
-    created_at: Optional[datetime]
+    public_id: str  # ensure consistent with DB (VARCHAR/UUID)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

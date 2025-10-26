@@ -30,9 +30,13 @@ def upgrade() -> None:
     # Core / Auth
     # =======================
     op.create_table(
-        "role_types",
+        "roles",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("name", sa.String(50), nullable=False, unique=True),
+        sa.Column("key", sa.String(50), nullable=False, unique=True),
+        sa.Column("name", sa.String(100), nullable=False),
+        sa.Column("description", sa.Text()),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=created_ts),
+        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
         **_tbl_kwargs(),
     )
 
@@ -44,7 +48,7 @@ def upgrade() -> None:
         sa.Column("first_name", sa.String(120)),
         sa.Column("last_name", sa.String(120)),
         sa.Column("phone_e164", sa.String(32)),
-        sa.Column("role_id", sa.Integer(), sa.ForeignKey("role_types.id")),
+        sa.Column("role_id", sa.Integer(), sa.ForeignKey("roles.id")),
         sa.Column("onboarding_completed", sa.Boolean(), nullable=False, server_default=sa.text("0")),
         sa.Column("is_email_verified", sa.Boolean(), nullable=False, server_default=sa.text("0")),
         sa.Column("plan_tier", sa.String(64)),
@@ -61,13 +65,16 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("provider", sa.String(32), nullable=False, server_default=sa.text("'password'")),
+        sa.Column("password_algo", sa.String(32), nullable=False, server_default=sa.text("'bcrypt'")),
         sa.Column("password_hash", sa.String(255)),
+        sa.Column("last_password_change", sa.DateTime()),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=created_ts),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
         **_tbl_kwargs(),
     )
     op.create_index("ix_user_credentials_user_id", "user_credentials", ["user_id"])
     op.create_index("ix_user_credentials_provider", "user_credentials", ["provider"])
+    op.create_index("ux_user_credentials_user_provider", "user_credentials", ["user_id", "provider"], unique=True)
 
     op.create_table(
         "email_verifications",
@@ -85,9 +92,12 @@ def upgrade() -> None:
         "sessions",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("access_token", sa.String(512), nullable=False, unique=True),
+        sa.Column("access_token", sa.String(512), unique=True),
         sa.Column("refresh_token", sa.String(512), unique=True),
+        sa.Column("user_agent", sa.String(255)),
+        sa.Column("ip_addr", sa.String(64)),
         sa.Column("expires_at", sa.DateTime(), nullable=False),
+        sa.Column("revoked_at", sa.DateTime()),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=created_ts),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
         **_tbl_kwargs(),
@@ -105,13 +115,14 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
         **_tbl_kwargs(),
     )
-    op.create_index("ix_onboarding_forms_user_id", "onboarding_forms", ["user_id"])
+    op.create_index("ux_onboarding_forms_user_id", "onboarding_forms", ["user_id"], unique=True)
 
-    # Seed role types
+    # Seed roles
     op.execute(
-        "INSERT INTO role_types (name) VALUES "
-        "('buyer'), ('builder'), ('community'), ('community_admin'), ('salesrep'), ('admin') "
-        "ON DUPLICATE KEY UPDATE name = VALUES(name);"
+        "INSERT INTO roles (`key`, `name`) VALUES "
+        "('buyer','Buyer'),('builder','Builder'),('community','Community'),"
+        "('community_admin','Community Admin'),('salesrep','Sales Representative'),('admin','Administrator') "
+        "ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);"
     )
 
     # =======================
@@ -559,9 +570,10 @@ def downgrade() -> None:
     op.drop_index("ix_builder_profiles_user_id", table_name="builder_profiles"); op.drop_table("builder_profiles")
 
     # Core
-    op.drop_index("ix_onboarding_forms_user_id", table_name="onboarding_forms"); op.drop_table("onboarding_forms")
+    op.drop_index("ux_onboarding_forms_user_id", table_name="onboarding_forms"); op.drop_table("onboarding_forms")
     op.drop_index("ix_sessions_user_id", table_name="sessions"); op.drop_table("sessions")
     op.drop_index("ix_email_verifications_user_id", table_name="email_verifications"); op.drop_table("email_verifications")
-    op.drop_index("ix_user_credentials_provider", table_name="user_credentials"); op.drop_index("ix_user_credentials_user_id", table_name="user_credentials"); op.drop_table("user_credentials")
+    op.drop_index("ix_user_credentials_provider", table_name="user_credentials"); op.drop_index("ix_user_credentials_user_id", table_name="user_credentials")
+    op.drop_index("ux_user_credentials_user_provider", table_name="user_credentials"); op.drop_table("user_credentials")
     op.drop_index("ux_users_public_id", table_name="users"); op.drop_index("ux_users_email", table_name="users"); op.drop_table("users")
-    op.drop_table("role_types")
+    op.drop_table("roles")
