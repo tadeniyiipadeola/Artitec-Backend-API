@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from config.db import get_db
 from model.user import Users  # adjust path if user model is elsewhere
@@ -22,6 +23,7 @@ from model.user import Users  # adjust path if user model is elsewhere
 from jose import JWTError, jwt
 import os
 import logging
+logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # JWT CONFIG
 # ---------------------------------------------------------------------------
@@ -85,7 +87,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(Users).filter(Users.public_id == user_id).first()
+    user = db.scalar(select(Users).where(Users.public_id == user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -103,4 +105,41 @@ def get_current_user_optional(
     if not user_id:
         return None
 
-    return db.query(Users).filter(Users.public_id == user_id).first()
+    return db.scalar(select(Users).where(Users.public_id == user_id))
+
+
+# ---------------------------------------------------------------------------
+# ADMIN OR SELF DEPENDENCY
+# ---------------------------------------------------------------------------
+def require_admin_or_self(
+    db: Session = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    public_id: Optional[str] = None,
+) -> bool:
+    """Authorize request: allow if caller is admin or matches the target public_id.
+    If no `public_id` is provided by the path, only admins are allowed.
+    This function is designed to be used as a FastAPI dependency.
+    """
+    # If no token, reject
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    caller_public_id = verify_token(token)
+    caller = db.scalar(select(Users).where(Users.public_id == caller_public_id))
+    if not caller:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid auth")
+
+    # Determine admin via role key, if relationship is present
+    role_key = getattr(getattr(caller, "role", None), "key", None)
+    is_admin = role_key == "admin"
+
+    # If a target public_id is provided (from route path params), allow when self or admin
+    if public_id is not None:
+        if is_admin or caller.public_id == str(public_id):
+            return True
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    # No target id provided: only admins may proceed
+    if is_admin:
+        return True
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")

@@ -1,11 +1,18 @@
 # src/schemas.py
 from datetime import datetime
 from typing import Optional, Literal, Union, Annotated, List, Dict
-from pydantic import BaseModel, EmailStr, constr, model_validator, ConfigDict
+from pydantic import BaseModel, EmailStr, model_validator, ConfigDict
 from pydantic import Field as PydField
 from decimal import Decimal
 
-RoleLiteral = Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
+# Role payload model returned with the user
+class RoleOut(BaseModel):
+    key: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
+    name: str
+
+# Request model for updating a user's role
+class UserRoleUpdate(BaseModel):
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
 
 class RegisterIn(BaseModel):
     first_name: str
@@ -39,10 +46,10 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    role: Optional[RoleLiteral] = None
+    role: Optional[RoleOut] = None
     buyer_profile_id: Optional[int] = None
     is_email_verified: bool
-    onboarding_complete: bool = False
+    onboarding_completed: bool = False
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -63,7 +70,7 @@ class LoginIn(BaseModel):
 class OrgLookupOut(BaseModel):
     is_existing: bool
     existing_active: bool
-    tier: Optional[str] = None  # one of: free, pro, enterprise
+    tier: Optional[Literal["free", "pro", "enterprise"]] = None  # constrained to known tiers
     org_type: Optional[Literal["builder", "community"]] = None  # one of: builder, community
     no_pay: bool
 
@@ -81,13 +88,13 @@ PlanLiteral = Literal[
 
 class RoleSelectionIn(BaseModel):
     user_public_id: str
-    role: Literal["buyer", "builder", "community", "community_admin", "salesrep"]
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     org_id: Optional[str] = None
     selected_plan: Optional[PlanLiteral] = None
 
 class RoleSelectionOut(BaseModel):
     user: UserOut
-    role: RoleLiteral
+    role: RoleOut
     plan_label: Optional[str] = None
     requires_payment: bool
     next_step: Literal["finish", "checkout", "await_verification"]
@@ -180,14 +187,14 @@ RoleForm = Annotated[
 ]
 
 class FormPreviewOut(BaseModel):
-    role: str
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     valid: bool
     missing: Dict[str, str] = PydField(default_factory=dict)
     suggestions: List[str] = PydField(default_factory=list)
     next_step: Literal["finish", "await_verification", "review"]
 
 class FormCommitOut(BaseModel):
-    role: str
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     saved: bool
     messages: List[str]
     next_step: Literal["finish", "await_verification"]

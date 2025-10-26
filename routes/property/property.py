@@ -26,7 +26,7 @@ try:  # favorites/saves are optional; guarded to avoid import errors if not yet 
 except Exception:  # pragma: no cover
     FavoriteProperty = None  # type: ignore
 
-router = APIRouter(prefix="/v1/properties", tags=["Properties"])
+router = APIRouter()
 
 
 # ----------------------------------------------------------------------------

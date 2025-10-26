@@ -15,26 +15,11 @@ try:
 except Exception:  # pragma: no cover
     social_router = None  # type: ignore
 
-try:
-    from routes.property.property import router as property_router
-except Exception:  # pragma: no cover
-    property_router = None  # type: ignore
-
-# Community & Builder modules (route files may vary by your structure)
-try:
-    from routes.profiles.community import router as community_router  # e.g., routes/community.py
-except Exception:  # pragma: no cover
-    community_router = None  # type: ignore
-
-try:
-    from routes.profiles.builder import router as builder_router  # e.g., routes/builder.py
-except Exception:  # pragma: no cover
-    builder_router = None  # type: ignore
 
 
 from config.db import engine, SessionLocal
 from model.base import Base
-from model.user import RoleType
+from model.user import Role
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +47,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["Authentication"])
-app.include_router(user_router, prefix="/v1/users", tags=["Users"])
+app.include_router(user_router, tags=["Users"])
 app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
 app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
@@ -72,6 +57,17 @@ app.include_router(property.router, prefix="/v1/properties", tags=["Properties P
 # --- Optional routers (only included if module is available) ---
 if social_router is not None:
     app.include_router(social_router)  # already has /v1/social prefix inside
+
+
+# Minimal roles listing to drive SwiftUI role picker
+@app.get("/v1/roles", tags=["Roles"])
+def list_roles():
+    db = SessionLocal()
+    try:
+        rows = db.query(Role.key, Role.name).all()
+        return [{"key": k, "name": n} for (k, n) in rows]
+    finally:
+        db.close()
 
 
 
@@ -108,12 +104,12 @@ async def add_security_headers(request: Request, call_next):
 def _startup():
     # Create tables if they don't exist (dev)
     Base.metadata.create_all(engine)
-    logger.info("DB metadata ensured. Seeding role types if missing…")
+    logger.info("DB metadata ensured. Seeding roles if missing…")
 
-    # Seed role_types if missing (dev)
+    # Seed roles if missing (dev)
     db = SessionLocal()
     try:
-        codes = {c for (c,) in db.query(RoleType.code).all()}
+        keys = {k for (k,) in db.query(Role.key).all()}
         needed = [
             ("buyer", "Buyer"),
             ("builder", "Builder"),
@@ -122,11 +118,11 @@ def _startup():
             ("salesrep", "Sales Representative"),
             ("admin", "Administrator"),
         ]
-        for code, display in needed:
-            if code not in codes:
-                db.add(RoleType(code=code, display_name=display))
+        for key, name in needed:
+            if key not in keys:
+                db.add(Role(key=key, name=name))
         db.commit()
-        logger.info("Role types seeded: now present => %s", sorted({c for (c,) in db.query(RoleType.code).all()}))
+        logger.info("Roles seeded: now present => %s", sorted({k for (k,) in db.query(Role.key).all()}))
     finally:
         db.close()
 

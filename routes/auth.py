@@ -7,7 +7,7 @@ import logging
 
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
-from model.user import Users, UserCredential, EmailVerification, SessionToken, RoleType
+from model.user import Users, UserCredential, EmailVerification, SessionToken, Role
 from schema.auth import (
     OrgLookupOut, RoleSelectionIn, RoleSelectionOut,
     RoleForm, FormPreviewOut, FormCommitOut, PlanLiteral,
@@ -44,15 +44,15 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Register endpoint called with email=%s", body.email)
     logger.debug("Handling /register request body: %s", body.dict(exclude={'password','confirm_password'}))
     # Pick a temporary default role so we can create the record now; update on next step
-    rt = db.query(RoleType).filter(RoleType.code == "buyer").one_or_none()
-    if not rt:
-        # Fallback to any available role type
-        rt = db.query(RoleType).first()
-    if not rt:
-        logger.error("Default role type not found")
+    role_row = db.query(Role).filter(Role.key == "buyer").one_or_none()
+    if not role_row:
+        # Fallback to any available role
+        role_row = db.query(Role).first()
+    if not role_row:
+        logger.error("Default role not found")
         raise HTTPException(
             status_code=500,
-            detail="Default role types not seeded. Seed role_types with at least one entry (e.g., 'buyer')."
+            detail="Default roles not seeded. Seed roles with at least one entry (e.g., 'buyer')."
         )
 
     logger.debug("Checking if email already exists: %s", body.email)
@@ -66,13 +66,13 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         logger.warning("Passwords do not match for email=%s", body.email)
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
-    u = Users(  
+    u = Users(
         public_id=gen_public_id(),
         email=body.email,
         first_name=body.first_name,
         last_name=body.last_name,
         phone_e164=body.phone_e164,
-        role_type_id=rt.id
+        role_id=role_row.id
     )
     db.add(u)
     db.flush()
@@ -113,7 +113,6 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
-            # role_type=rt.code,
             is_email_verified=u.is_email_verified,
             created_at=u.created_at
         ),
@@ -160,7 +159,6 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
-            # role_type=u.role_type.code,
             is_email_verified=u.is_email_verified,
             created_at=u.created_at
         ),
@@ -209,8 +207,8 @@ def _plan_label(plan: Optional[str]) -> Optional[str]:
     }
     return mapping.get(plan) if plan else None
 
-def _resolve_role_type_code(db: Session, role: str) -> RoleType:
-    preferred_codes = {
+def _resolve_role(db: Session, role_key: str) -> Role:
+    preferred_keys = {
         "buyer": ["buyer"],
         "builder": ["builder"],
         "community": ["community"],
@@ -218,14 +216,14 @@ def _resolve_role_type_code(db: Session, role: str) -> RoleType:
         "salesrep": ["salesrep"],
         "admin": ["admin"],
     }
-    for code in preferred_codes.get(role, [role]):
-        rt = db.query(RoleType).filter(RoleType.code == code).one_or_none()
-        if rt:
-            return rt
-    rt_any = db.query(RoleType).first()
-    if not rt_any:
-        raise HTTPException(status_code=500, detail="No role types are seeded.")
-    return rt_any
+    for key in preferred_keys.get(role_key, [role_key]):
+        r = db.query(Role).filter(Role.key == key).one_or_none()
+        if r:
+            return r
+    r_any = db.query(Role).first()
+    if not r_any:
+        raise HTTPException(status_code=500, detail="No roles are seeded.")
+    return r_any
 
 @router.get("/role/org-lookup", response_model=OrgLookupOut)
 def org_lookup(id: str):
@@ -371,15 +369,14 @@ def role_selection_commit(body: RoleSelectionIn, db: Session = Depends(get_db)):
         if not u:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Resolve and set the role type based on selected role
-        rt = _resolve_role_type_code(db, body.role)
-        u.role_type_id = rt.id
-        u.role = body.role
+        # Resolve and set the role based on selected role key
+        r = _resolve_role(db, body.role)
+        u.role_id = r.id
         db.add(u)
         db.commit()
         db.refresh(u)
 
-        logger.info("[role_selection_commit] persisted role_type_id=%s for user=%s", rt.id, u.public_id)
+        logger.info("[role_selection_commit] persisted role_id=%s for user=%s", r.id, u.public_id)
         preview = role_selection_preview(body, db)
         logger.info("[role_selection_commit] next_step=%s", preview.next_step)
         return preview

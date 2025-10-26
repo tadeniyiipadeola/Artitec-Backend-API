@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Optional, Literal, Union, Annotated, Dict
 from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr
+from src.schemas import RoleOut
 
 PlanLiteral = Literal[
     "userFree",
@@ -16,16 +17,14 @@ PlanLiteral = Literal[
     "communityAdminVerify",
 ]
 
-RoleLiteral = Literal["buyer","builder","community","community_admin","salesrep","admin"]
-
 class RoleSelectionIn(BaseModel):
     public_id: str
-    role: RoleLiteral
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     org_id: Optional[str] = None
     selected_plan: Optional[str] = None
 
 class RoleSelectionOut(BaseModel):
-    role: RoleLiteral
+    role: RoleOut
     next_step: Literal["finish","checkout","await_verification"] = "finish"
     requires_payment: bool = False
     messages: list[str] = []
@@ -68,7 +67,7 @@ class CommunityForm(BaseModel):
     enterprise_number: Optional[str] = None
 
 class CommunityAdminForm(BaseModel):
-    role: Literal["communityAdmin"] = "communityAdmin"
+    role: Literal["community_admin"] = "community_admin"
     public_id: str
     first_name: str
     last_name: str
@@ -79,7 +78,7 @@ class CommunityAdminForm(BaseModel):
     community_address: Optional[str] = None
 
 class SalesRepForm(BaseModel):
-    role: Literal["salesRep"] = "salesRep"
+    role: Literal["salesrep"] = "salesrep"
     public_id: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
