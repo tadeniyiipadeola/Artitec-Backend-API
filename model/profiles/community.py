@@ -59,6 +59,8 @@ class Community(Base):
     threads = relationship("CommunityTopic", cascade="all, delete-orphan")
     phases = relationship("CommunityPhase", cascade="all, delete-orphan")
 
+    sales_reps = relationship("SalesRep", back_populates="community", cascade="all, delete-orphan")
+
     # Admin/profile links
     admin_links = relationship(
         "CommunityAdminLink",

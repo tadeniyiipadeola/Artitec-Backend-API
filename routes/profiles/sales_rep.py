@@ -27,7 +27,7 @@ except Exception:
     from schema.sales_rep import SalesRepCreate, SalesRepUpdate, SalesRepOut  # type: ignore
 
 
-router = APIRouter()
+router = APIRouter(prefix="/v1/profiles/sales-reps", tags=["Sales Representative Profiles"])
 
 
 # ---------------------------- helpers ----------------------------

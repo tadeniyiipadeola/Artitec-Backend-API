@@ -1,6 +1,7 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, TIMESTAMP, func, Boolean, BigInteger as MyBIGINT
+from sqlalchemy import Column, String, ForeignKey,Boolean, TIMESTAMP, func
+from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
-from model.base import Base  # or your declarative base import
+from model.base import Base
 
 class SalesRep(Base):
     __tablename__ = "sales_reps"

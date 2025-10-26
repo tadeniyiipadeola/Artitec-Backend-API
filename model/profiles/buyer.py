@@ -44,7 +44,7 @@ class BuyerProfile(Base):
 
     # Primary key for buyer profile (used as buyer_profile_id in API)
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    # One-to-one with users.id (unique)
+    # One-to-one with users.public_id (unique)
     user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.public_id", ondelete="CASCADE"), unique=True, nullable=False)
 
     # Identity / display

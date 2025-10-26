@@ -258,6 +258,24 @@ def upgrade() -> None:
     )
     op.create_index("ux_comm_admin_links", "community_admin_links", ["community_id", "user_id"], unique=True)
 
+    # Community events (calendar)
+    op.create_table(
+        "community_events",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("community_id", sa.Integer(), sa.ForeignKey("communities.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("title", sa.String(200), nullable=False),
+        sa.Column("description", sa.Text()),
+        sa.Column("location", sa.String(255)),
+        sa.Column("start_at", sa.DateTime(), nullable=False),
+        sa.Column("end_at", sa.DateTime(), nullable=True),
+        sa.Column("is_public", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=created_ts),
+        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
+        **_tbl_kwargs(),
+    )
+    op.create_index("ix_community_events_comm_id", "community_events", ["community_id"])
+    op.create_index("ix_community_events_start_at", "community_events", ["start_at"])
+
     # Backfill FK in builder_communities now that communities exists
     op.create_foreign_key(
         "fk_builder_communities_community",
@@ -524,6 +542,9 @@ def downgrade() -> None:
     op.drop_constraint("fk_builder_communities_community", "builder_communities", type_="foreignkey"); 
     op.drop_index("ux_builder_communities", table_name="builder_communities"); op.drop_table("builder_communities")
     op.drop_index("ux_comm_admin_links", table_name="community_admin_links"); op.drop_table("community_admin_links")
+    op.drop_index("ix_community_events_start_at", table_name="community_events"); 
+    op.drop_index("ix_community_events_comm_id", table_name="community_events"); 
+    op.drop_table("community_events")
     op.drop_index("ix_community_amenities_comm_id", table_name="community_amenities"); op.drop_table("community_amenities")
     op.drop_index("ix_community_phases_comm_id", table_name="community_phases"); op.drop_table("community_phases")
     op.drop_index("ix_community_documents_community_id", table_name="community_documents"); op.drop_table("community_documents")

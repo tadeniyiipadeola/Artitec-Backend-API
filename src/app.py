@@ -22,6 +22,9 @@ from config.db import engine, SessionLocal
 from model.base import Base
 from model.user import Role
 
+from model import load_all_models
+load_all_models()
+
 logger = logging.getLogger(__name__)
 
 
