@@ -83,6 +83,37 @@ class CommunityRef(BaseModel):
 
 
 # ------------------------------------------------------------
+# SalesRep schemas
+# ------------------------------------------------------------
+class SalesRepBase(BaseModel):
+    full_name: str
+    title: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    avatar_url: Optional[HttpUrl] = None
+    region: Optional[str] = None
+    office_address: Optional[str] = None
+    verified: Optional[bool] = False
+    builder_id: Optional[int] = None
+    community_id: Optional[int] = None
+
+class SalesRepCreate(SalesRepBase):
+    builder_id: int
+
+class SalesRepUpdate(SalesRepBase):
+    pass
+
+class SalesRepOut(SalesRepBase):
+    id: int
+    builder_id: int
+    community_id: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ------------------------------------------------------------
 # Out model
 # ------------------------------------------------------------
 class BuilderProfileOut(BuilderProfileBase):

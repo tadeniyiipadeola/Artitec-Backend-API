@@ -132,6 +132,27 @@ def upgrade() -> None:
     )
     op.create_index("ix_builder_profiles_user_id", "builder_profiles", ["user_id"])
 
+    # Sales reps linked to builders
+    op.create_table(
+        "sales_reps",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("builder_id", sa.Integer(), sa.ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("community_id", sa.Integer(), nullable=True),
+        sa.Column("full_name", sa.String(255), nullable=False),
+        sa.Column("title", sa.String(128)),
+        sa.Column("email", sa.String(255)),
+        sa.Column("phone", sa.String(64)),
+        sa.Column("avatar_url", sa.String(1024)),
+        sa.Column("region", sa.String(128)),
+        sa.Column("office_address", sa.String(255)),
+        sa.Column("verified", sa.Boolean(), server_default=sa.text("0")),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=created_ts),
+        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
+        **_tbl_kwargs(),
+    )
+    op.create_index("ix_sales_reps_builder_id", "sales_reps", ["builder_id"])
+    op.create_index("ix_sales_reps_community_id", "sales_reps", ["community_id"])
+
     op.create_table(
         "builder_awards",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -243,6 +264,12 @@ def upgrade() -> None:
         "builder_communities", "communities",
         ["community_id"], ["id"],
         ondelete="CASCADE",
+    )
+    op.create_foreign_key(
+        "fk_sales_reps_community",
+        "sales_reps", "communities",
+        ["community_id"], ["id"],
+        ondelete="SET NULL",
     )
 
     # =======================
@@ -503,6 +530,9 @@ def downgrade() -> None:
     op.drop_index("ix_communities_name", table_name="communities"); op.drop_table("communities")
 
     # Builder
+    op.drop_constraint("fk_sales_reps_community", "sales_reps", type_="foreignkey");
+    op.drop_index("ix_sales_reps_community_id", table_name="sales_reps");
+    op.drop_index("ix_sales_reps_builder_id", table_name="sales_reps"); op.drop_table("sales_reps")
     op.drop_index("ix_builder_documents_builder_id", table_name="builder_documents"); op.drop_table("builder_documents")
     op.drop_index("ix_builder_awards_builder_id", table_name="builder_awards"); op.drop_table("builder_awards")
     op.drop_index("ix_builder_profiles_user_id", table_name="builder_profiles"); op.drop_table("builder_profiles")

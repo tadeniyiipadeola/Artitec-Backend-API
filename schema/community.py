@@ -45,9 +45,12 @@ class CommunityAmenityOut(CommunityAmenityBase):
 
 
 class CommunityEventBase(BaseModel):
-    date: datetime
     title: constr(strip_whitespace=True, min_length=1, max_length=255)
-    subtitle: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    description: Optional[str] = None
+    location: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    start_at: datetime
+    end_at: Optional[datetime] = None
+    is_public: Optional[bool] = True
 
 
 class CommunityEventCreate(CommunityEventBase):
@@ -55,14 +58,19 @@ class CommunityEventCreate(CommunityEventBase):
 
 
 class CommunityEventUpdate(BaseModel):
-    date: Optional[datetime] = None
     title: Optional[constr(strip_whitespace=True, min_length=1, max_length=255)] = None
-    subtitle: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    description: Optional[str] = None
+    location: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    is_public: Optional[bool] = None
 
 
 class CommunityEventOut(CommunityEventBase):
     id: int
     community_id: int
+    created_at: datetime
+    updated_at: datetime
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)

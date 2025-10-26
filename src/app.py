@@ -1,12 +1,13 @@
 # src/app.py
 import logging
+import os
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from routes.auth import router as auth_router
 from routes.user import router as user_router
-from routes.profiles import buyers, builder, community
+from routes.profiles import buyers, builder, community, sales_rep
 from routes.property import property
 
 # Optional routers (import if present)
@@ -52,6 +53,8 @@ app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Pr
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
 app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
 app.include_router(property.router, prefix="/v1/properties", tags=["Properties Profiles"])
+app.include_router(sales_rep.router, prefix="/v1/profiles/sales-reps", tags=["Sales Representative Profiles"])    
+
 
 
 # --- Optional routers (only included if module is available) ---
@@ -102,29 +105,35 @@ async def add_security_headers(request: Request, call_next):
 # NOTE: FastAPI recommends lifespan context for newer apps; startup event is fine for dev.
 @app.on_event("startup")
 def _startup():
-    # Create tables if they don't exist (dev)
-    Base.metadata.create_all(engine)
-    logger.info("DB metadata ensured. Seeding roles if missing…")
+    # Optionally ensure schema in dev if explicitly enabled (prefer Alembic normally)
+    if os.getenv("ARTITEC_DEV_CREATE_SCHEMA") == "1":
+        Base.metadata.create_all(engine)
+        logger.info("DB metadata ensured via SQLAlchemy (dev mode).")
+    else:
+        logger.info("Skipping Base.metadata.create_all(); use Alembic migrations for schema.")
 
-    # Seed roles if missing (dev)
-    db = SessionLocal()
-    try:
-        keys = {k for (k,) in db.query(Role.key).all()}
-        needed = [
-            ("buyer", "Buyer"),
-            ("builder", "Builder"),
-            ("community", "Community"),
-            ("community_admin", "Community Admin"),
-            ("salesrep", "Sales Representative"),
-            ("admin", "Administrator"),
-        ]
-        for key, name in needed:
-            if key not in keys:
-                db.add(Role(key=key, name=name))
-        db.commit()
-        logger.info("Roles seeded: now present => %s", sorted({k for (k,) in db.query(Role.key).all()}))
-    finally:
-        db.close()
+    # Optionally seed roles (only if tables are present)
+    if os.getenv("ARTITEC_SEED_ROLES", "1") == "1":
+        db = SessionLocal()
+        try:
+            keys = {k for (k,) in db.query(Role.key).all()}
+            needed = [
+                ("buyer", "Buyer"),
+                ("builder", "Builder"),
+                ("community", "Community"),
+                ("community_admin", "Community Admin"),
+                ("salesrep", "Sales Representative"),
+                ("admin", "Administrator"),
+            ]
+            for key, name in needed:
+                if key not in keys:
+                    db.add(Role(key=key, name=name))
+            db.commit()
+            logger.info("Roles seeded (if missing): %s", sorted({k for (k,) in db.query(Role.key).all()}))
+        except Exception as e:
+            logger.warning("Skipping role seeding; likely tables not present yet: %s", e)
+        finally:
+            db.close()
 
 # Optional quick health route
 @app.get("/health")

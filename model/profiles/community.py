@@ -52,7 +52,7 @@ class Community(Base):
 
     # Relationships (1-to-many)
     amenities = relationship("CommunityAmenity", cascade="all, delete-orphan")
-    events = relationship("CommunityEvent", cascade="all, delete-orphan")
+    events = relationship("CommunityEvent", cascade="all, delete-orphan", back_populates="community")
     builder_cards = relationship("CommunityBuilder", cascade="all, delete-orphan")
     admins = relationship("CommunityAdmin", cascade="all, delete-orphan")
     awards = relationship("CommunityAward", cascade="all, delete-orphan")
@@ -91,9 +91,19 @@ class CommunityEvent(Base):
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
-    date = Column(TIMESTAMP, nullable=False)
     title = Column(String(255), nullable=False)
-    subtitle = Column(String(255))
+    description = Column(Text)
+    location = Column(String(255))
+    start_at = Column(TIMESTAMP, nullable=False)
+    end_at = Column(TIMESTAMP)
+    is_public = Column(Boolean, default=True, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
+    )
+
+    # Relationship back to Community
+    community = relationship("Community", back_populates="events")
 
 
 class CommunityBuilder(Base):

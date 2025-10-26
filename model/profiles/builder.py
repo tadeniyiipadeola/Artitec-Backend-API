@@ -29,42 +29,6 @@ builder_communities = Table(
     Column("community_id", MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), primary_key=True),
 )
 
-class SalesRep(Base):
-    """
-    Represents a builder's assigned sales representative.
-    Connects builders to their primary or regional reps.
-    """
-    __tablename__ = "sales_reps"
-
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False)
-
-    full_name = Column(String(255), nullable=False)
-    title = Column(String(128))
-    email = Column(String(255))
-    phone = Column(String(64))
-    avatar_url = Column(String(1024))
-
-    # Optional metadata
-    region = Column(String(128))
-    office_address = Column(String(255))
-    verified = Column(Integer, default=0)
-
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
-    updated_at = Column(
-        TIMESTAMP,
-        server_default=func.current_timestamp(),
-        onupdate=func.current_timestamp(),
-        nullable=False,
-    )
-
-    # Relationship
-    builder = relationship("BuilderProfile", back_populates="sales_reps")
-
-    def __repr__(self):
-        return f"<SalesRep(name='{self.full_name}', builder='{self.builder_id}')>"
-
-
 # Helper to generate IDs like B_329_XXX_XXX_XXX_XXX
 def _gen_builder_public_id() -> str:
     s = uuid.uuid4().hex.upper()[:12]

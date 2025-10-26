@@ -1,5 +1,3 @@
-
-
 """Builder Profile routes (v1)
 
 Exposes CRUD and list/search endpoints for builder profiles.
@@ -19,6 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, selectinload
 from model.profiles.builder import BuilderProfile as BuilderModel
+try:
+    from model.profiles.builder import SalesRep as SalesRepModel
+except Exception:
+    SalesRepModel = None  # type: ignore
 from config.db import get_db
 from config.security import get_current_user_optional
 
@@ -46,6 +48,9 @@ try:
         BuilderProfileOut,
         BuilderProfileCreate,
         BuilderProfileUpdate,
+        SalesRepOut,
+        SalesRepCreate,
+        SalesRepUpdate,
     )
 except Exception as e:  # pragma: no cover
     raise ImportError("schema.builder.* Pydantic schemas are required") from e
@@ -67,6 +72,12 @@ def _get_or_404(db: Session, org_id: int) -> BuilderModel:
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
     return obj
+
+
+def _builder_id_by_org(db: Session, org_id: int) -> Optional[int]:
+    """Resolve BuilderProfile.id from external org_id. Returns None if not found."""
+    bp = db.query(BuilderModel.id).filter(BuilderModel.org_id == org_id).first()
+    return bp[0] if bp else None
 
 
 def _apply_includes(query, include: Set[str]):
@@ -227,6 +238,113 @@ def update_builder_profile(
 @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_builder_profile(*, db: Session = Depends(get_db), org_id: int):
     obj = _get_or_404(db, org_id)
+    db.delete(obj)
+    db.commit()
+    return None
+
+# --------------------------- sales reps (scoped) ---------------------------
+
+@router.get("/{org_id}/sales-reps", response_model=List[SalesRepOut])
+def list_sales_reps(
+    *,
+    db: Session = Depends(get_db),
+    org_id: int,
+):
+    builder_pk = _builder_id_by_org(db, org_id)
+    if not builder_pk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+    if SalesRepModel is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
+
+    rows = (
+        db.query(SalesRepModel)
+        .filter(SalesRepModel.builder_id == builder_pk)
+        .order_by(SalesRepModel.full_name.asc())
+        .all()
+    )
+    return [SalesRepOut.model_validate(r) for r in rows]
+
+
+@router.post("/{org_id}/sales-reps", response_model=SalesRepOut, status_code=status.HTTP_201_CREATED)
+def create_sales_rep(
+    *,
+    db: Session = Depends(get_db),
+    org_id: int,
+    payload: SalesRepCreate,
+):
+    builder_pk = _builder_id_by_org(db, org_id)
+    if not builder_pk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+    if SalesRepModel is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
+
+    # Force the builder_id to the resolved builder PK to prevent cross-org creation
+    data = payload.model_dump(exclude_none=True)
+    data["builder_id"] = builder_pk
+
+    obj = SalesRepModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return SalesRepOut.model_validate(obj)
+
+
+@router.put("/{org_id}/sales-reps/{rep_id}", response_model=SalesRepOut)
+@router.patch("/{org_id}/sales-reps/{rep_id}", response_model=SalesRepOut)
+def update_sales_rep(
+    *,
+    db: Session = Depends(get_db),
+    org_id: int,
+    rep_id: int,
+    payload: SalesRepUpdate,
+):
+    builder_pk = _builder_id_by_org(db, org_id)
+    if not builder_pk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+    if SalesRepModel is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
+
+    obj = db.query(SalesRepModel).filter(
+        SalesRepModel.id == rep_id,
+        SalesRepModel.builder_id == builder_pk
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sales rep not found for this builder")
+
+    data = payload.model_dump(exclude_none=True)
+    # Prevent reassignment to another builder_id via payload
+    data.pop("builder_id", None)
+
+    for k, v in data.items():
+        if hasattr(obj, k):
+            setattr(obj, k, v)
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return SalesRepOut.model_validate(obj)
+
+
+@router.delete("/{org_id}/sales-reps/{rep_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_sales_rep(
+    *,
+    db: Session = Depends(get_db),
+    org_id: int,
+    rep_id: int,
+):
+    builder_pk = _builder_id_by_org(db, org_id)
+    if not builder_pk:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+    if SalesRepModel is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
+
+    obj = db.query(SalesRepModel).filter(
+        SalesRepModel.id == rep_id,
+        SalesRepModel.builder_id == builder_pk
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sales rep not found for this builder")
+
     db.delete(obj)
     db.commit()
     return None
