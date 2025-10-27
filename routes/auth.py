@@ -14,7 +14,9 @@ from schema.auth import (
     BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm,
 )
 from src.schemas import RegisterIn, LoginIn, AuthOut, UserOut
+
 from src.utils import gen_public_id, gen_token_hex, hash_password, verify_password, make_access_token
+from config.dependencies import require_user
 
 
 logger = logging.getLogger(__name__)
@@ -351,40 +353,79 @@ def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db))
 
 
 @router.post("/role/selection/commit", response_model=RoleSelectionOut)
-def role_selection_commit(body: RoleSelectionIn, db: Session = Depends(get_db)):
+def role_selection_commit(
+    body: RoleSelectionIn,
+    db: Session = Depends(get_db),
+    current_user: Users = Depends(require_user),
+):
     """
-    Persist the chosen role (maps to UserType) and echo what the client should do next.
-    Notes:
-    * This implementation only updates the User's type. Linking organizations/subscriptions
-      can be added later when those tables are available.
-    * Client should call /role/selection/preview first to get guidance.
+    Persist the chosen role (maps to Role) and then return the same structure as
+    the preview endpoint. We allow an optional public_id in the body; if present
+    it must match the authenticated user to prevent spoofing. When omitted, we
+    fall back to the JWT user.
     """
-    try:
-        logger.debug("[role_selection_commit] in: user=%s role=%s org_id=%s plan=%s",
-                     body.user_public_id, body.role, _redact(body.org_id, keep=6), body.selected_plan)
-        parsed = _parse_org_id(body.org_id)
+    logger.debug(
+        "[role_selection_commit] in: user=%s role=%s org_id=%s plan=%s",
+        getattr(body, "user_public_id", None),
+        getattr(body, "role", None),
+        _redact(body.org_id, keep=6),
+        getattr(body, "selected_plan", None),
+    )
 
-        # Find the user by public_id
-        u = db.query(Users).filter(Users.public_id == body.user_public_id).one_or_none()
-        if not u:
-            raise HTTPException(status_code=404, detail="User not found")
+    # Determine target user via public_id (if provided) or authenticated user
+    requested_pub = body.user_public_id or current_user.public_id
 
-        # Resolve and set the role based on selected role key
-        r = _resolve_role(db, body.role)
-        u.role_id = r.id
-        db.add(u)
-        db.commit()
-        db.refresh(u)
+    # Security: if client supplied a public_id, it must match the authenticated user
+    if body.user_public_id is not None and requested_pub != current_user.public_id:
+        raise HTTPException(status_code=403, detail="Forbidden: user mismatch")
 
-        logger.info("[role_selection_commit] persisted role_id=%s for user=%s", r.id, u.public_id)
-        preview = role_selection_preview(body, db)
-        logger.info("[role_selection_commit] next_step=%s", preview.next_step)
-        return preview
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("[role_selection_commit] unexpected error")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    # Load active user
+    u = (
+        db.query(Users)
+        .filter(Users.public_id == requested_pub, Users.status == "active")
+        .one_or_none()
+    )
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Resolve role by key and persist
+    r = _resolve_role(db, body.role)
+    u.role_id = r.id
+
+    # Optional: persist selected plan tier if present (map UI keys to DB tiers)
+    if getattr(body, "selected_plan", None):
+        plan_map = {
+            "userFree": "free",
+            "builderFree": "free",
+            "builderPro": "pro",
+            "builderEnterprise": "enterprise",
+            "communityFree": "free",
+            "communityEnterprise": "enterprise",
+            "existingActive": "free",
+            "salesRep": "free",
+            "communityAdminVerify": "free",
+        }
+        mapped = plan_map.get(body.selected_plan, body.selected_plan)
+        # Only set if we resolved something sensible
+        if mapped:
+            u.plan_tier = mapped
+
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+
+    logger.info("[role_selection_commit] persisted role_id=%s for user=%s", r.id, u.public_id)
+
+    # Call preview with a fresh payload (avoid mutating the incoming model)
+    preview_body = RoleSelectionIn(
+        user_public_id=u.public_id,
+        role=body.role,
+        org_id=body.org_id,
+        selected_plan=body.selected_plan,
+    )
+    preview = role_selection_preview(preview_body, db)
+    logger.info("[role_selection_commit] next_step=%s", preview.next_step)
+    return preview
 
 # =============================
 # Step 3: Role-Based Form (Preview & Commit)

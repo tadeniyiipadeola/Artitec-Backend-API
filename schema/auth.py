@@ -2,7 +2,9 @@
 from __future__ import annotations
 from typing import List, Optional, Literal, Union, Annotated, Dict
 from datetime import datetime
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, AliasChoices
+from pydantic.config import ConfigDict
+
 from src.schemas import RoleOut
 
 PlanLiteral = Literal[
@@ -18,10 +20,26 @@ PlanLiteral = Literal[
 ]
 
 class RoleSelectionIn(BaseModel):
-    public_id: str
-    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
-    org_id: Optional[str] = None
-    selected_plan: Optional[str] = None
+    # accept any of these keys: user_public_id, public_id, userPublicId
+    user_public_id: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("user_public_id", "public_id", "userPublicId"),
+    )
+    # allow only supported roles (relax to `str` if needed)
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep"]
+    # org_id can be null or absent; accept org_id / orgId
+    org_id: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("org_id", "orgId"),
+    )
+    # plan can arrive as selected_plan / plan_tier / planTier / selectedPlan
+    selected_plan: Optional[PlanLiteral] = Field(
+        None,
+        validation_alias=AliasChoices("selected_plan", "plan_tier", "planTier", "selectedPlan"),
+    )
+
+    # ignore unexpected extra keys instead of failing, and allow populate_by_name
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 class RoleSelectionOut(BaseModel):
     role: RoleOut
