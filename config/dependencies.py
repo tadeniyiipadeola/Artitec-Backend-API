@@ -2,7 +2,8 @@
 
 from typing import Optional, Iterable, Callable
 from fastapi import Depends, HTTPException, Request, status
-from jose import jwt, JWTError, ExpiredSignatureError
+from jose import jwt
+from jose.exceptions import JWTError, ExpiredSignatureError
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from datetime import timedelta
@@ -24,13 +25,14 @@ def _get_bearer_token(request: Request) -> str:
 
 def _decode_access_token(token: str) -> dict:
     try:
+        options = {"verify_aud": False}
         # Disable aud verification unless you explicitly set/expect it
         payload = jwt.decode(
             token,
             JWT_SECRET,
             algorithms=[JWT_ALG],
-            options={"verify_aud": False},
-            leeway=_LEEWAY,
+            issuer=JWT_ISS if JWT_ISS else None,
+            options=options,
         )
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -38,7 +40,7 @@ def _decode_access_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     # Optional issuer/type checks (match your token minting)
-    if JWT_ISSUER and payload.get("iss") != JWT_ISSUER:
+    if JWT_ISS and payload.get("iss") != JWT_ISS:
         raise HTTPException(status_code=401, detail="Invalid token issuer")
     typ = payload.get("typ")
     if typ not in ("access", "bearer", None):

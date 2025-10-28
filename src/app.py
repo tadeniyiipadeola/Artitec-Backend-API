@@ -9,6 +9,7 @@ from routes.auth import router as auth_router
 from routes.user import router as user_router
 from routes.profiles import buyers, builder, community, sales_rep
 from routes.property import property
+from fastapi.openapi.utils import get_openapi
 
 # Optional routers (import if present)
 try:
@@ -29,6 +30,27 @@ logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="Artitec API", version="1.0.0")
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Artitec API",
+        version="1.0.0",
+        routes=app.routes,
+    )
+    # Ensure components/securitySchemes exists
+    openapi_schema.setdefault("components", {}).setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+    }
+    # Apply globally so all operations require Bearer unless overridden
+    openapi_schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+app.openapi = custom_openapi
+
 logging.basicConfig(level=logging.INFO)
 logger.info("Artitec API starting…")
 

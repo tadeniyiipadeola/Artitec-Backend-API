@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr, AliasChoices
 from pydantic.config import ConfigDict
 
-from src.schemas import RoleOut
+from src.schemas import UserOut, OrgParseOut
 
 PlanLiteral = Literal[
     "userFree",
@@ -42,10 +42,13 @@ class RoleSelectionIn(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 class RoleSelectionOut(BaseModel):
-    role: RoleOut
-    next_step: Literal["finish","checkout","await_verification"] = "finish"
-    requires_payment: bool = False
+    user: UserOut
+    role: str                      # ← was RoleOut; now just the role key e.g. "buyer"
+    plan_label: str
+    requires_payment: bool
+    next_step: Literal["finish", "payment", "org_info"]
     messages: list[str] = []
+    parsed_org: OrgParseOut
 
 class OrgLookupOut(BaseModel):
     is_existing: bool

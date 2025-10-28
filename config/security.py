@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
@@ -34,8 +34,8 @@ SECRET_KEY = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET") or "dev-secret-a
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/login")
-oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/v1/auth/login", auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=True)
+bearer_scheme_optional = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +77,9 @@ def verify_token(token: str) -> str:
 # ---------------------------------------------------------------------------
 # DEPENDENCIES
 # ---------------------------------------------------------------------------
-def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> Users:
+def get_current_user(db: Session = Depends(get_db), creds: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> Users:
     """Require valid JWT and return the user."""
+    token = creds.credentials
     user_id = verify_token(token)
     if not user_id:
         raise HTTPException(
@@ -95,12 +96,13 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
 
 
 def get_current_user_optional(
-    db: Session = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme_optional)
+    db: Session = Depends(get_db), creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme_optional)
 ) -> Optional[Users]:
     """Return user if token is valid, otherwise None (no error)."""
-    if not token:
+    if not creds:
         return None
 
+    token = creds.credentials
     user_id = verify_token(token)
     if not user_id:
         return None
@@ -113,7 +115,7 @@ def get_current_user_optional(
 # ---------------------------------------------------------------------------
 def require_admin_or_self(
     db: Session = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme_optional),
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme_optional),
     public_id: Optional[str] = None,
 ) -> bool:
     """Authorize request: allow if caller is admin or matches the target public_id.
@@ -121,9 +123,10 @@ def require_admin_or_self(
     This function is designed to be used as a FastAPI dependency.
     """
     # If no token, reject
-    if not token:
+    if not creds:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    token = creds.credentials
     caller_public_id = verify_token(token)
     caller = db.scalar(select(Users).where(Users.public_id == caller_public_id))
     if not caller:

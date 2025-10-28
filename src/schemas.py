@@ -80,12 +80,32 @@ class LoginIn(BaseModel):
 # =============================
 # Step 2: Role Selection & Org Lookup
 # =============================
+
 class OrgLookupOut(BaseModel):
     is_existing: bool
     existing_active: bool
     tier: Optional[Literal["free", "pro", "enterprise"]] = None  # constrained to known tiers
     org_type: Optional[Literal["builder", "community"]] = None  # one of: builder, community
     no_pay: bool
+
+
+# Parsed organization info used in role selection responses
+class OrgParseOut(BaseModel):
+    is_existing: bool
+    existing_active: bool
+    tier: Optional[Literal["free", "pro", "enterprise"]] = None
+    org_type: Optional[Literal["builder", "community"]] = None
+    no_pay: bool
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "is_existing": False,
+            "existing_active": False,
+            "tier": "free",
+            "org_type": "builder",
+            "no_pay": True
+        }
+    })
 
 PlanLiteral = Literal[
     "userFree",
@@ -115,12 +135,12 @@ class RoleSelectionIn(BaseModel):
 
 class RoleSelectionOut(BaseModel):
     user: UserOut
-    role: RoleOut
+    role: Literal["buyer", "builder", "community", "community_admin", "salesrep", "admin"]
     plan_label: Optional[str] = None
     requires_payment: bool
     next_step: Literal["finish", "checkout", "await_verification"]
     messages: List[str]
-    parsed_org: Optional[OrgLookupOut] = None
+    parsed_org: Optional[OrgParseOut] = None
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "user": {
@@ -135,7 +155,7 @@ class RoleSelectionOut(BaseModel):
                 "created_at": "2025-01-01T12:00:00Z",
                 "updated_at": "2025-01-02T12:00:00Z"
             },
-            "role": {"key": "buyer", "name": "Buyer"},
+            "role": "buyer",
             "plan_label": "Free Plan",
             "requires_payment": False,
             "next_step": "finish",

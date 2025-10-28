@@ -9,11 +9,11 @@ from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
 from model.user import Users, UserCredential, EmailVerification, SessionToken, Role
 from schema.auth import (
-    OrgLookupOut, RoleSelectionIn, RoleSelectionOut,
+    OrgLookupOut, RoleSelectionIn,
     RoleForm, FormPreviewOut, FormCommitOut, PlanLiteral,
     BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm,
 )
-from src.schemas import RegisterIn, LoginIn, AuthOut, UserOut
+from src.schemas import RegisterIn, LoginIn, AuthOut, UserOut, RoleSelectionOut, OrgParseOut
 
 from src.utils import gen_public_id, gen_token_hex, hash_password, verify_password, make_access_token
 from config.dependencies import require_user
@@ -40,7 +40,8 @@ router = APIRouter()
         409: {"description": "Conflict - Email already in use"},
         422: {"description": "Unprocessable Entity - Validation error"},
         500: {"description": "Internal Server Error - Default user type not seeded or unexpected error"}
-    }
+    },
+    openapi_extra={"security": []}
 )
 def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Register endpoint called with email=%s", body.email)
@@ -132,7 +133,8 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         401: {"description": "Unauthorized - Invalid email or password"},
         422: {"description": "Unprocessable Entity - Validation error"},
         500: {"description": "Internal Server Error"}
-    }
+    },
+    openapi_extra={"security": []}
 )
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Login attempt for email=%s", body.email)
@@ -227,7 +229,7 @@ def _resolve_role(db: Session, role_key: str) -> Role:
         raise HTTPException(status_code=500, detail="No roles are seeded.")
     return r_any
 
-@router.get("/role/org-lookup", response_model=OrgLookupOut)
+@router.get("/role/org-lookup", response_model=OrgLookupOut, openapi_extra={"security": []})
 def org_lookup(id: str):
     """Parse an org ID from the client (e.g., B-ACTIVE-PRO-4123) and return status."""
     try:
@@ -240,7 +242,7 @@ def org_lookup(id: str):
         logger.exception("[org_lookup] unexpected error")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/role/selection/preview", response_model=RoleSelectionOut)
+@router.post("/role/selection/preview", response_model=RoleSelectionOut, openapi_extra={"security": []})
 def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db)):
     """
     Validates the user's selection from the Role/Tier UI and tells the app the next step.
@@ -343,7 +345,7 @@ def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db))
             requires_payment=requires_payment,
             next_step=next_step,  # finish | checkout | await_verification
             messages=messages,
-            parsed_org=parsed,
+            parsed_org=OrgParseOut(**parsed.model_dump()) if parsed is not None else None,
         )
     except HTTPException:
         raise
@@ -494,7 +496,7 @@ def _validate_role_form(form: RoleForm) -> FormPreviewOut:
     return FormPreviewOut(role="unknown", valid=False, missing={"role": "Unsupported role"}, suggestions=[], next_step="review")
 
 
-@router.post("/role/form/preview", response_model=FormPreviewOut)
+@router.post("/role/form/preview", response_model=FormPreviewOut, openapi_extra={"security": []})
 def role_form_preview(body: RoleForm):
     """Validate role-based form fields from step 3 and advise next action."""
     try:
