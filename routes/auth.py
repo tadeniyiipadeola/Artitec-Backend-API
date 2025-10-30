@@ -1,9 +1,11 @@
 from typing import Optional, Literal, List, Dict
 # routes/auth.py
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Body
 from sqlalchemy.orm import Session
 import logging
+
+from pydantic import ValidationError
 
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
@@ -429,6 +431,58 @@ def role_selection_commit(
     logger.info("[role_selection_commit] next_step=%s", preview.next_step)
     return preview
 
+
+
+# Generalized role form builder for all roles
+def _build_role_form(data: dict) -> RoleForm:
+    role = data.get("role")
+    if role == "buyer":
+        return BuyerForm(**data)
+    elif role == "builder":
+        return BuilderForm(**data)
+    elif role == "community":
+        return CommunityForm(**data)
+    elif role == "community_admin":
+        return CommunityAdminForm(**data)
+    elif role == "salesrep":
+        return SalesRepForm(**data)
+    # Fallback to the base union if needed
+    return RoleForm(**data)
+
+def _normalize_role_form_payload(raw: dict) -> RoleForm:
+    """
+    Accept either shape:
+      A) Flat payload:
+         { "role": "buyer", "user_public_id": "...", ...role fields... }
+      B) Nested payload:
+         { "role": "buyer", "user_public_id": "...", "buyer": { ...role fields... } }
+    We flatten (B) into (A) by merging the nested block whose key matches the role.
+    """
+    role = raw.get("role")
+    if not role:
+        raise HTTPException(status_code=422, detail="Missing 'role' discriminator")
+    if role not in {"buyer", "builder", "community", "community_admin", "salesrep"}:
+        raise HTTPException(status_code=422, detail=f"Unsupported role: {role}")
+    if role and isinstance(raw.get(role), dict):
+        nested = raw[role]
+        merged = {**raw, **nested}
+        merged.pop(role, None)
+        # Backfill from nested.public_id -> user_public_id / public_id
+        if not merged.get("user_public_id") and nested.get("public_id"):
+            merged["user_public_id"] = nested["public_id"]
+        if not merged.get("public_id") and nested.get("public_id"):
+            merged["public_id"] = nested["public_id"]
+        # Backfill from top-level user_public_id -> public_id (BuyerForm expects public_id)
+        if not merged.get("public_id") and merged.get("user_public_id"):
+            merged["public_id"] = merged["user_public_id"]
+        return _build_role_form(merged)
+    # Already flat: ensure Buyer-compatible IDs if client sent user_public_id only
+    flat = dict(raw)
+    if role == "buyer":
+        if not flat.get("public_id") and flat.get("user_public_id"):
+            flat["public_id"] = flat["user_public_id"]
+    return _build_role_form(flat)
+
 # =============================
 # Step 3: Role-Based Form (Preview & Commit)
 # =============================
@@ -497,59 +551,70 @@ def _validate_role_form(form: RoleForm) -> FormPreviewOut:
 
 
 @router.post("/role/form/preview", response_model=FormPreviewOut, openapi_extra={"security": []})
-def role_form_preview(body: RoleForm):
+def role_form_preview(body: dict = Body(...)):
     """Validate role-based form fields from step 3 and advise next action."""
     try:
+        # Normalize incoming body (supports nested 'buyer' or top-level fields)
+        form = _normalize_role_form_payload(body)
         logger.debug("[role_form_preview] in: user=%s role=%s",
-                     getattr(body, 'user_public_id', None), getattr(body, 'role', None))
-        out = _validate_role_form(body)
+                     getattr(form, 'user_public_id', None), getattr(form, 'role', None))
+        out = _validate_role_form(form)
         logger.info("[role_form_preview] out: role=%s valid=%s next_step=%s missing=%d",
                     out.role, out.valid, out.next_step, len(out.missing))
         return out
     except HTTPException:
         raise
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=ve.errors())
     except Exception:
         logger.exception("[role_form_preview] unexpected error")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/role/form/commit", response_model=FormCommitOut)
-def role_form_commit(body: RoleForm, db: Session = Depends(get_db)):
+def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
     """
     Persist role-based form fields. For now we stage data for later processors:
     - If tables like builder_profiles/community_profiles exist, this can be extended to insert rows.
     - Current implementation is non-destructive and only ensures the user exists.
     """
     try:
-        logger.debug("[role_form_commit] in: user=%s role=%s",
-                     getattr(body, 'user_public_id', None), getattr(body, 'role', None))
-        u = db.query(Users).filter(Users.public_id == body.user_public_id).one_or_none()
+        # Normalize incoming body (supports nested 'buyer' or top-level fields)
+        form = _normalize_role_form_payload(body)
+        # Prefer user_public_id, but fall back to public_id for legacy schemas
+        uid = getattr(form, "user_public_id", None) or getattr(form, "public_id", None)
+        logger.debug("[role_form_commit] in: user=%s role=%s", uid, getattr(form, 'role', None))
+        if not uid:
+            raise HTTPException(status_code=422, detail={"missing": {"user_public_id": "User public_id is required"}})
+        u = db.query(Users).filter(Users.public_id == uid).one_or_none()
         if not u:
-            logger.warning("[role_form_commit] user not found: %s", body.user_public_id)
+            logger.warning("[role_form_commit] user not found: %s", form.user_public_id)
             raise HTTPException(status_code=404, detail="User not found")
-        preview = _validate_role_form(body)
+        preview = _validate_role_form(form)
         if not preview.valid:
             logger.warning("[role_form_commit] validation failed: missing=%s", list(preview.missing.keys()))
             raise HTTPException(status_code=422, detail={"missing": preview.missing})
         messages: List[str] = []
-        if isinstance(body, BuilderForm):
+        if isinstance(form, BuilderForm):
             messages.append("Builder details received. Pending profile creation (builder_profiles).")
-        elif isinstance(body, CommunityForm):
+        elif isinstance(form, CommunityForm):
             messages.append("Community details received. Pending verification & profile creation (community_profiles).")
-        elif isinstance(body, CommunityAdminForm):
+        elif isinstance(form, CommunityAdminForm):
             messages.append("Admin details received. Verification will be required before admin privileges are active.")
-        elif isinstance(body, SalesRepForm):
+        elif isinstance(form, SalesRepForm):
             messages.append("Sales Rep details received. Optional license/brokerage stored.")
-        elif isinstance(body, BuyerForm):
+        elif isinstance(form, BuyerForm):
             messages.append("Buyer details received. Preferences will power recommendations.")
         next_step: Literal["finish", "await_verification"] = "finish"
-        if isinstance(body, CommunityAdminForm):
+        if isinstance(form, CommunityAdminForm):
             next_step = "await_verification"
         logger.info("[role_form_commit] out: user=%s role=%s next_step=%s messages=%d",
                     u.public_id, preview.role, next_step, len(messages))
         return FormCommitOut(role=preview.role, saved=True, messages=messages, next_step=next_step)
     except HTTPException:
         raise
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=ve.errors())
     except Exception:
         logger.exception("[role_form_commit] unexpected error")
         raise HTTPException(status_code=500, detail="Internal server error")

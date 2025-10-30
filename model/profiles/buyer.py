@@ -54,10 +54,24 @@ class BuyerProfile(Base):
     location = Column(String(255), nullable=True)
     website_url = Column(String(512), nullable=True)
 
-    # Contact (optional)
-    contact_email = Column(String(255), nullable=True)
-    contact_phone = Column(String(32), nullable=True)
+    # Legal name (often required up-front during onboarding)
+    first_name = Column(String(120), nullable=True)
+    last_name  = Column(String(120), nullable=True)
+
+    # Contact (optional) — keep legacy fields for compatibility
+    contact_email = Column(String(255), nullable=True)  # legacy alias for email
+    contact_phone = Column(String(32), nullable=True)   # legacy alias for phone
     contact_preferred = Column(PreferredChannelEnum, nullable=False, server_default="email")
+
+    # Canonical contact fields used by role form commit
+    email = Column(String(255), nullable=True)
+    phone = Column(String(32), nullable=True)
+
+    # Address (optional but required at onboarding for buyer role)
+    address = Column(String(255), nullable=True)
+    city    = Column(String(120), nullable=True)
+    state   = Column(String(64), nullable=True)
+    zip_code = Column(String(20), nullable=True)
 
     # Core profile attributes
     sex = Column(SexEnum, nullable=True)
@@ -107,7 +121,7 @@ class BuyerProfile(Base):
     )
 
     def __repr__(self):
-        return f"<BuyerProfile(user_id={self.user_id}, display_name={self.display_name!r})>"
+        return f"<BuyerProfile(user_id={self.user_id}, name={self.first_name!r} {self.last_name!r}, display_name={self.display_name!r})>"
 
 
 # --------------------------- BuyerPreference --------------------------------
