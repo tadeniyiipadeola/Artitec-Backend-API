@@ -116,15 +116,26 @@ class SalesRepForm(BaseModel):
 
 class BuyerForm(BaseModel):
     role: Literal["buyer"] = "buyer"
-    public_id: str
+    # Accept multiple keys for the user's id to align with client/normalizer variants
+    user_public_id: str = Field(
+        ..., validation_alias=AliasChoices("user_public_id", "public_id", "userPublicId")
+    )
+
+    # Core identity & contact
     first_name: str
     last_name: str
     email: EmailStr
     phone: str
+
+    # Location
     address: str
     city: str
     state: str
-    zip: Optional[str] = None
+    zip_code: Optional[str] = Field(
+        None, validation_alias=AliasChoices("zip_code", "zip", "zipCode")
+    )
+
+    # Optional demographics & prefs
     sex: Optional[str] = None
     income_range: Optional[str] = None
     first_time: Optional[str] = None
@@ -133,6 +144,9 @@ class BuyerForm(BaseModel):
     budget_max: Optional[str] = None
     location_interest: Optional[str] = None
     builder_interest: Optional[str] = None
+
+    # Be lenient with extras and allow field name population
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 RoleForm = Annotated[
     Union[BuilderForm, CommunityForm, CommunityAdminForm, SalesRepForm, BuyerForm],

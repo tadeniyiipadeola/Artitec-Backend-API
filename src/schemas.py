@@ -221,20 +221,60 @@ class BuyerForm(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    phone: str
-    address: str
-    city: str
-    state: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
     zip_code: Optional[str] = None
     sex: Optional[str] = None
     # preferences
     income_range: Optional[str] = None
-    first_time: Optional[str] = None  # "Yes"/"No"/"Prefer not to say"
+    # Accept either legacy string or new boolean for first-time buyer
+    first_time: Optional[str] = None                 # "Yes"/"No"/"Prefer not to say" (legacy)
+    first_time_home_buyer: Optional[bool] = None     # new (preferred)
     home_type: Optional[str] = None   # "Single home"/"Multiple homes"
     budget_min: Optional[Decimal] = None
     budget_max: Optional[Decimal] = None
     location_interest: Optional[str] = None
     builder_interest: Optional[str] = None
+    buying_timeline: Optional[str] = None            # "0–3 months","3–6 months","6–12 months","12+ months"
+    financing_status: Optional[str] = None           # "Pre-approved","Pre-qualified","Researching","Cash buyer"
+    loan_program: Optional[str] = None               # "FHA","Conventional","VA","USDA","Other"
+    preferred_channel: Optional[str] = None          # "Email","Phone","Text","In-app"
+    household_income: Optional[int] = None           # plain USD integer
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_numeric_fields(cls, values):
+        """
+        Coerce string currency inputs like '250,000' -> Decimal('250000')
+        and 'household_income' -> int when provided as a string.
+        """
+        def _to_decimal(x):
+            if x is None or isinstance(x, Decimal):
+                return x
+            s = str(x).replace(",", "").strip()
+            if s == "":
+                return None
+            try:
+                return Decimal(s)
+            except Exception:
+                return None
+        def _to_int(x):
+            if x is None or isinstance(x, int):
+                return x
+            s = str(x).replace(",", "").strip()
+            if s == "":
+                return None
+            try:
+                return int(float(s))
+            except Exception:
+                return None
+        vals = dict(values or {})
+        vals["budget_min"] = _to_decimal(vals.get("budget_min"))
+        vals["budget_max"] = _to_decimal(vals.get("budget_max"))
+        vals["household_income"] = _to_int(vals.get("household_income"))
+        return vals
 
     @model_validator(mode="after")
     def check_budget_range(self):
@@ -242,6 +282,23 @@ class BuyerForm(BaseModel):
             if self.budget_min > self.budget_max:
                 raise ValueError("budget_min cannot be greater than budget_max")
         return self
+
+    def as_formatted_dict(self) -> dict:
+        """
+        Return a dictionary representation with currency fields formatted as strings with dollar signs.
+        Example: 250000 -> "$250,000"
+        """
+        data = self.dict()
+        def _fmt_money(val):
+            if val is None:
+                return None
+            try:
+                return f"${val:,.0f}"
+            except Exception:
+                return str(val)
+        for key in ["budget_min", "budget_max", "household_income"]:
+            data[key] = _fmt_money(data.get(key))
+        return data
 
 # Tagged union keyed by `role`
 RoleForm = Annotated[
