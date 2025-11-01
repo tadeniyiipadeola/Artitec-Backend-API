@@ -20,7 +20,7 @@ def get_me(current_user: Users = Depends(get_current_user)):
     return current_user
 
 
-@router.get("/{public_id}", response_model=UserOut)
+@router.get("/v1/users/{public_id}", response_model=UserOut)
 def get_user_by_public_id(public_id: str, db: Session = Depends(get_db)):
     """
     Returns a user by their public_id.

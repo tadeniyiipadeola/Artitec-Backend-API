@@ -92,7 +92,7 @@ def _attach_social_fields(
     db: Session,
     org_id: int,
     out_obj: BuilderProfileOut,
-    current_user_id: Optional[int],
+    current_user_id: Optional[str],
 ) -> None:
     """Mutates `out_obj` to set followers_count and is_following if Follow is available."""
     if Follow is None:

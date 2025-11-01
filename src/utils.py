@@ -45,7 +45,7 @@ def verify_password(pw: str, hashed: str) -> bool:
         logger.warning("Password verification failed due to malformed hash", exc_info=True)
         return False
 
-def make_access_token(user_public_id: str, user_id: int, email: str) -> str:
+def make_access_token(user_public_id: str, user_id: str, email: str) -> str:
     """Issue a short-lived access token.
     Includes standard claims and a jti for traceability.
     """

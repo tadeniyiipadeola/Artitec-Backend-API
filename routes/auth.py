@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
 from model.user import Users, UserCredential, EmailVerification, SessionToken, Role
+from model.profiles.buyer import BuyerProfile
 from schema.auth import (
     OrgLookupOut, RoleSelectionIn,
     RoleForm, FormPreviewOut, FormCommitOut, PlanLiteral,
@@ -605,9 +606,123 @@ def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
             messages.append("Sales Rep details received. Optional license/brokerage stored.")
         elif isinstance(form, BuyerForm):
             messages.append("Buyer details received. Preferences will power recommendations.")
+            # Persist/Upsert BuyerProfile from submitted form
+            # 1) Update core user fields (keep existing if client sent blanks)
+            if getattr(form, "first_name", None) and str(form.first_name).strip():
+                u.first_name = str(form.first_name).strip()
+            if getattr(form, "last_name", None) and str(form.last_name).strip():
+                u.last_name = str(form.last_name).strip()
+            if getattr(form, "email", None) and str(form.email).strip():
+                u.email = str(form.email).strip()
+            if getattr(form, "phone", None) and str(form.phone).strip():
+                # Store raw in users.phone_e164 for now; upstream can normalize
+                u.phone_e164 = str(form.phone).strip()
+            db.add(u)
+
+            # 2) Find or create BuyerProfile keyed by user's public_id
+            prof = (
+                db.query(BuyerProfile)
+                .filter(BuyerProfile.user_id == u.public_id)
+                .one_or_none()
+            )
+            display_name = f"{u.first_name or ''} {u.last_name or ''}".strip()
+
+            if prof is None:
+                prof = BuyerProfile(
+                    user_id=u.public_id,
+                    display_name=display_name or None,
+                )
+
+            # 3) Push contact + basic presentation fields
+            prof.display_name = display_name or prof.display_name
+            prof.contact_email = (str(form.email).strip() or None) if getattr(form, "email", None) else prof.contact_email
+            prof.contact_phone = (str(form.phone).strip() or None) if getattr(form, "phone", None) else prof.contact_phone
+
+            # location: "City, State" when available
+            city_val = str(form.city).strip() if getattr(form, "city", None) else ""
+            state_val = str(form.state).strip() if getattr(form, "state", None) else ""
+            loc = ", ".join([s for s in (city_val, state_val) if s])
+            prof.location = loc or prof.location
+
+            # 3b) Optional enum-backed fields with safe normalization
+            # timeline (e.g., "3-6 months") -> BuyTimelineEnum
+            if getattr(form, "buying_timeline", None):
+                val = str(form.buying_timeline).strip().lower()
+                # Simple normalization; adjust these to match your Enum values
+                TMAP = {
+                    "asap": "asap",
+                    "0-3 months": "soon",
+                    "3-6 months": "three_to_six",
+                    "6-12 months": "six_to_twelve",
+                    "12+ months": "later",
+                    "exploring": "exploring",
+                }
+                mapped = TMAP.get(val, None)
+                if mapped:
+                    try:
+                        prof.timeline = mapped  # assumes DB Enum names match strings above
+                    except Exception:
+                        pass  # ignore invalid enum assignment
+
+            # financing_status (e.g., "Pre-approved", "Prequalified", "Unknown")
+            if getattr(form, "financing_status", None):
+                val = str(form.financing_status).strip().lower().replace(" ", "_")
+                FMAP = {
+                    "unknown": "unknown",
+                    "pre_approved": "pre_approved",
+                    "preapproved": "pre_approved",
+                    "prequalified": "prequalified",
+                    "no_financing": "no_financing",
+                }
+                mapped = FMAP.get(val, None)
+                if mapped:
+                    try:
+                        prof.financing_status = mapped
+                    except Exception:
+                        pass
+
+            # loan_program (free text or known set)
+            if getattr(form, "loan_program", None):
+                lp = str(form.loan_program).strip()
+                if lp:
+                    prof.loan_program = lp
+
+            # preferred contact channel (e.g., "Email", "Phone", "SMS")
+            if getattr(form, "preferred_channel", None):
+                val = str(form.preferred_channel).strip().lower()
+                CMAP = {
+                    "email": "email",
+                    "phone": "phone",
+                    "sms": "sms",
+                    "text": "sms",
+                }
+                mapped = CMAP.get(val, None)
+                if mapped:
+                    try:
+                        prof.contact_preferred = mapped
+                    except Exception:
+                        pass
+
+            # 4) Preserve additional submitted fields in `extra` for future structured mapping
+            extra = dict(prof.extra or {})
+            for key in [
+                "address", "zip_code", "income_range", "household_income",
+                "first_time", "first_time_home_buyer", "home_type",
+                "budget_min", "budget_max",
+                "location_interest", "builder_interest", "sex",
+                "buying_timeline", "preferred_channel"
+            ]:
+                if hasattr(form, key):
+                    val = getattr(form, key)
+                    if val is not None and str(val).strip() != "":
+                        extra[key] = val
+            prof.extra = extra
+
+            db.add(prof)
         next_step: Literal["finish", "await_verification"] = "finish"
         if isinstance(form, CommunityAdminForm):
             next_step = "await_verification"
+        db.commit()
         logger.info("[role_form_commit] out: user=%s role=%s next_step=%s messages=%d",
                     u.public_id, preview.role, next_step, len(messages))
         return FormCommitOut(role=preview.role, saved=True, messages=messages, next_step=next_step)

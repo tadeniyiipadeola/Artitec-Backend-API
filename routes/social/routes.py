@@ -115,7 +115,7 @@ def like_post(post_id: int, db: Session = Depends(get_db), current_user: Users =
 # --------------------------
 
 @router.post("/users/{user_id}/follow", status_code=status.HTTP_200_OK)
-def follow_user(user_id: int, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
+def follow_user(user_id: str, db: Session = Depends(get_db), current_user: Users = Depends(get_current_user)):
     """Follow or unfollow a user."""
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You cannot follow yourself")
