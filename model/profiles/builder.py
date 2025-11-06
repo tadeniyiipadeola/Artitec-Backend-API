@@ -42,7 +42,7 @@ class BuilderProfile(Base):
     Also links to:
       - portfolio properties via builder_portfolio
       - active communities via builder_communities
-      - owning/primary user via user_id (replaces separate BuilderProfile)
+      - owning/primary user via user_id
     """
     __tablename__ = "builder_profiles"
 
@@ -50,7 +50,7 @@ class BuilderProfile(Base):
     build_id = Column(String(64), unique=True, nullable=False, default=_gen_builder_public_id)
 
     # One-to-one link to platform user (the account that owns/manages this builder)
-    public_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.public_id", ondelete="SET NULL"), unique=True, nullable=True, index=True)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
 
     # Core fields
     name = Column(String(255), nullable=False)
@@ -80,7 +80,7 @@ class BuilderProfile(Base):
     )
 
     # Relationships
-    user = relationship("Users", backref="builder", lazy="joined", uselist=False)
+    user = relationship("Users", back_populates="builder_profile", lazy="joined", uselist=False)
     sales_reps = relationship("SalesRep", back_populates="builder", cascade="all, delete-orphan")
 
     # Many-to-many relationships

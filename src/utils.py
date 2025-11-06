@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from passlib.context import CryptContext
 import jwt
-from config.settings import JWT_SECRET, JWT_ISS, ACCESS_TTL_MIN
+from config.settings import JWT_SECRET, JWT_ISS, JWT_ALG, ACCESS_TTL_MIN
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +63,12 @@ def make_access_token(user_public_id: str, user_id: str, email: str) -> str:
         "exp": int((issued_at + timedelta(minutes=ACCESS_TTL_MIN)).timestamp()),
         "jti": gen_token_urlsafe(18),
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 def decode_access_token(token: str, verify_iss: bool = True) -> Dict[str, Any]:
     """Decode & minimally validate an access token. Raises jwt exceptions on failure."""
     options = {"require": ["exp", "iat", "nbf", "sub", "typ"], "verify_signature": True}
-    claims = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options=options)
+    claims = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG], options=options)
     if verify_iss and claims.get("iss") != JWT_ISS:
         raise jwt.InvalidIssuerError("Invalid token issuer")
     if claims.get("typ") != "access":

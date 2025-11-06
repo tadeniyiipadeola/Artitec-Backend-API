@@ -44,8 +44,8 @@ class BuyerProfile(Base):
 
     # Primary key for buyer profile (used as buyer_profile_id in API)
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    # One-to-one with users.public_id (unique)
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.public_id", ondelete="CASCADE"), unique=True, nullable=False)
+    # One-to-one with users.id (unique)
+    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
 
     # Identity / display
     display_name = Column(String(255), nullable=True)
@@ -80,6 +80,8 @@ class BuyerProfile(Base):
     # Financing snapshot (optional and editable)
     financing_status = Column(FinancingStatusEnum, nullable=False, server_default="unknown")
     loan_program = Column(LoanProgramEnum, nullable=True)
+    household_income_usd = Column(Integer, nullable=True)        # annual household income
+    budget_min_usd = Column(Integer, nullable=True)              # minimum budget
     budget_max_usd = Column(Integer, nullable=True)              # whole dollars (use DECIMAL if you need cents)
     down_payment_percent = Column(SmallInteger, nullable=True)   # 0–100
     lender_name = Column(String(255), nullable=True)

@@ -19,20 +19,20 @@ from sqlalchemy import select
 
 from config.db import get_db
 from model.user import Users  # adjust path if user model is elsewhere
-# add (or fix) this import at the top with your other imports
 from jose import JWTError, jwt
 import os
 import logging
+from dotenv import load_dotenv
+from config.settings import JWT_SECRET, JWT_ALG, JWT_ISS
+
 logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # JWT CONFIG
 # ---------------------------------------------------------------------------
-from dotenv import load_dotenv
 load_dotenv()
-# Prefer SECRET_KEY, fallback to JWT_SECRET (legacy), and finally a dev default
-SECRET_KEY = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET") or "dev-secret-artitec-key"
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+SECRET_KEY = JWT_SECRET
+ALGORITHM = JWT_ALG
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24 * 7))  # 7 days default
 
 bearer_scheme = HTTPBearer(auto_error=True)
 bearer_scheme_optional = HTTPBearer(auto_error=False)
@@ -45,6 +45,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
+    if JWT_ISS:
+        to_encode.setdefault("iss", JWT_ISS)
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -63,6 +65,8 @@ def verify_token(token: str) -> str:
         # Ensure these exist in your module:
         # SECRET_KEY: str = "..." and ALGORITHM: str = "HS256" (or your algo)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if JWT_ISS and payload.get("iss") != JWT_ISS:
+            raise credentials_exception
         user_id = payload.get("sub")
         if not user_id:
             raise credentials_exception

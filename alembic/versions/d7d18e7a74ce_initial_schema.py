@@ -386,8 +386,16 @@ def upgrade() -> None:
     op.create_table(
         "buyer_profiles",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True),
+        sa.Column("user_id", sa.String(64), sa.ForeignKey("users.public_id", ondelete="CASCADE"), nullable=False, unique=True),
+
+        # Display / bio
         sa.Column("display_name", sa.String(150), nullable=False),
+        sa.Column("avatar_symbol", sa.String(16)),
+        sa.Column("bio", sa.Text()),
+        sa.Column("location", sa.String(255)),
+        sa.Column("website_url", sa.String(255)),
+
+        # Legacy / optional identity fields
         sa.Column("first_name", sa.String(120)),
         sa.Column("last_name", sa.String(120)),
         sa.Column("email", sa.String(255)),
@@ -396,10 +404,27 @@ def upgrade() -> None:
         sa.Column("city", sa.String(120)),
         sa.Column("state", sa.String(64)),
         sa.Column("zip_code", sa.String(16)),
-        sa.Column("bio", sa.Text()),
-        sa.Column("website_url", sa.String(255)),
-        sa.Column("location", sa.String(255)),
         sa.Column("sex", sa.String(16)),
+
+        # Contact preferences
+        sa.Column("contact_email", sa.String(255)),
+        sa.Column("contact_phone", sa.String(32)),
+        sa.Column("contact_preferred", sa.String(16)),  # email | phone | sms | in_app
+
+        # Financing snapshot
+        sa.Column("timeline", sa.String(32)),
+        sa.Column("financing_status", sa.String(32)),
+        sa.Column("loan_program", sa.String(32)),
+        sa.Column("household_income_usd", sa.Integer()),
+        sa.Column("budget_min_usd", sa.Integer()),
+        sa.Column("budget_max_usd", sa.Integer()),
+        sa.Column("down_payment_percent", sa.Integer()),
+        sa.Column("lender_name", sa.String(255)),
+        sa.Column("agent_name", sa.String(255)),
+
+        # Flexible metadata (JSON/text)
+        sa.Column("extra", sa.Text()),
+
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=created_ts),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=updated_ts),
         **_tbl_kwargs(),

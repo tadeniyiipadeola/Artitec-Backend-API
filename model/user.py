@@ -36,6 +36,7 @@ class Users(Base):
     role = relationship("Role", back_populates="users")
     creds = relationship("UserCredential", uselist=False, back_populates="user", passive_deletes=True)
     buyer_profile = relationship("BuyerProfile", back_populates="user", uselist=False)
+    builder_profile = relationship("BuilderProfile", back_populates="user", uselist=False)
     sessions = relationship("SessionToken", backref="user", passive_deletes=True)
     email_verifications = relationship("EmailVerification", backref="user", passive_deletes=True)
 

@@ -5,8 +5,10 @@ import os
 DB_URL = os.getenv("DB_URL", "mysql+pymysql://user:pass@127.0.0.1:3306/artitec")
 
 # JWT & Security settings
-JWT_SECRET = os.getenv("JWT_SECRET", "replace_me")
-JWT_ALG = os.getenv("JWT_ALG", "HS256")
+# Accept either JWT_SECRET or SECRET_KEY, and default to a dev key if nothing provided
+JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "dev-secret-artitec-key"
+# Allow either JWT_ALG or JWT_ALGORITHM
+JWT_ALG = os.getenv("JWT_ALG") or os.getenv("JWT_ALGORITHM") or "HS256"
 JWT_ISS = os.getenv("JWT_ISS", "artitec.api")
 
 ACCESS_TTL_MIN = int(os.getenv("ACCESS_TTL_MIN", 15))      # Access token validity (minutes)

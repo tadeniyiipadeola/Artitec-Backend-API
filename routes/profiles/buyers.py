@@ -45,7 +45,7 @@ def _ensure_user(db: Session, user_key: str | int) -> Users:
     return user
 
 # Resolve buyer_id (BuyerProfile.id) from a given internal users.id
-def _resolve_buyer_id(db: Session, internal_user_id: int | str) -> int:
+def _resolve_buyer_id(db: Session, internal_user_id: str) -> int:
     prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == internal_user_id).first()
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
