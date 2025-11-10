@@ -49,7 +49,7 @@ class BuyerProfile(Base):
 
     # Identity / display
     display_name = Column(String(255), nullable=True)
-    avatar_symbol = Column(String(64), nullable=True)            # e.g., SF Symbol name from SwiftUI avatar picker
+    profile_image = Column(String(500), nullable=True)           # URL to uploaded profile image
     bio = Column(Text, nullable=True)
     location = Column(String(255), nullable=True)
     website_url = Column(String(512), nullable=True)

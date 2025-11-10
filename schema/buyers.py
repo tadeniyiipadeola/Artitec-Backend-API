@@ -139,7 +139,7 @@ class BuyerProfileIn(BaseModel):
     # Identity / display
     user_id: Optional[str] = None  # FK to users.public_id
     display_name: Optional[str] = None
-    avatar_symbol: Optional[str] = None
+    profile_image: Optional[str] = None  # URL to uploaded profile image
     bio: Optional[str] = None
     location: Optional[str] = None
     website_url: Optional[str] = None
@@ -220,6 +220,15 @@ class BuyerProfileIn(BaseModel):
 class BuyerProfileOut(BuyerProfileIn):
     id: int                      # buyer_profiles.id
     user_id: str                 # FK to users.public_id (string in the provided model)
+
+    # User fields (from users table) - Required
+    first_name: str              # users.first_name
+    last_name: str               # users.last_name
+    email: str                   # users.email
+
+    # User fields (from users table) - Optional
+    phone_e164: Optional[str] = None    # users.phone_e164
+
     created_at: datetime
     updated_at: datetime
 

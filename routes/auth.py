@@ -113,14 +113,25 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
 
     access = make_access_token(u.public_id, u.id, u.email)
     logger.info("Registration successful for user email=%s", body.email)
+    # Ensure role relationship is loaded for UserOut
+    if u.role:
+        role_out = {"key": u.role.key, "name": u.role.name}
+    else:
+        role_out = None
+
     return AuthOut(
         user=UserOut(
             public_id=u.public_id,
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
+            phone_e164=u.phone_e164,
+            role=role_out,
             is_email_verified=u.is_email_verified,
-            created_at=u.created_at
+            onboarding_completed=u.onboarding_completed,
+            plan_tier=u.plan_tier,
+            created_at=u.created_at,
+            updated_at=u.updated_at
         ),
         access_token=access,
         refresh_token=refresh,
@@ -160,14 +171,25 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Login successful for user id=%s", u.id)
 
     logger.info("Login completed successfully for email=%s", body.email)
+    # Ensure role relationship is loaded for UserOut
+    if u.role:
+        role_out = {"key": u.role.key, "name": u.role.name}
+    else:
+        role_out = None
+
     return AuthOut(
         user=UserOut(
             public_id=u.public_id,
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
+            phone_e164=u.phone_e164,
+            role=role_out,
             is_email_verified=u.is_email_verified,
-            created_at=u.created_at
+            onboarding_completed=u.onboarding_completed,
+            plan_tier=u.plan_tier,
+            created_at=u.created_at,
+            updated_at=u.updated_at
         ),
         access_token=make_access_token(u.public_id, u.id, u.email),
         refresh_token=refresh,
@@ -619,28 +641,57 @@ def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
                 u.phone_e164 = str(form.phone).strip()
             db.add(u)
 
-            # 2) Find or create BuyerProfile keyed by user's public_id
+            # 2) Find or create BuyerProfile keyed by user's integer ID
             prof = (
                 db.query(BuyerProfile)
-                .filter(BuyerProfile.user_id == u.public_id)
+                .filter(BuyerProfile.user_id == u.id)
                 .one_or_none()
             )
             display_name = f"{u.first_name or ''} {u.last_name or ''}".strip()
 
             if prof is None:
                 prof = BuyerProfile(
-                    user_id=u.public_id,
+                    user_id=u.id,  # Integer FK to users.id
                     display_name=display_name or None,
                 )
 
             # 3) Push contact + basic presentation fields
             prof.display_name = display_name or prof.display_name
-            prof.contact_email = (str(form.email).strip() or None) if getattr(form, "email", None) else prof.contact_email
-            prof.contact_phone = (str(form.phone).strip() or None) if getattr(form, "phone", None) else prof.contact_phone
 
-            # location: "City, State" when available
+            # Populate BOTH legacy and canonical fields
+            email_val = (str(form.email).strip() or None) if getattr(form, "email", None) else None
+            phone_val = (str(form.phone).strip() or None) if getattr(form, "phone", None) else None
+
+            if email_val:
+                prof.email = email_val
+                prof.contact_email = email_val
+            if phone_val:
+                prof.phone = phone_val
+                prof.contact_phone = phone_val
+
+            # Copy name fields to BuyerProfile
+            if u.first_name:
+                prof.first_name = u.first_name
+            if u.last_name:
+                prof.last_name = u.last_name
+
+            # Populate address fields from form into dedicated columns
+            if getattr(form, "address", None) and str(form.address).strip():
+                prof.address = str(form.address).strip()
+            if getattr(form, "zip_code", None) and str(form.zip_code).strip():
+                prof.zip_code = str(form.zip_code).strip()
+
+            # location: "City, State" when available (also store in dedicated columns)
             city_val = str(form.city).strip() if getattr(form, "city", None) else ""
             state_val = str(form.state).strip() if getattr(form, "state", None) else ""
+
+            # Store in dedicated columns
+            if city_val:
+                prof.city = city_val
+            if state_val:
+                prof.state = state_val
+
+            # Also create combined location string for display
             loc = ", ".join([s for s in (city_val, state_val) if s])
             prof.location = loc or prof.location
 
@@ -704,9 +755,10 @@ def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
                         pass
 
             # 4) Preserve additional submitted fields in `extra` for future structured mapping
+            # Note: address, city, state, zip_code now use dedicated columns
             extra = dict(prof.extra or {})
             for key in [
-                "address", "zip_code", "income_range", "household_income",
+                "income_range", "household_income",
                 "first_time", "first_time_home_buyer", "home_type",
                 "budget_min", "budget_max",
                 "location_interest", "builder_interest", "sex",

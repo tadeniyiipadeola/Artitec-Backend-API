@@ -1,13 +1,15 @@
 # src/app.py
 import logging
 import os
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
 from routes.user import router as user_router
-from routes.profiles import buyers, builder, community, sales_rep
+from routes.profiles import buyers, builder, community, sales_rep, community_admin
 from routes.property import property
 from fastapi.openapi.utils import get_openapi
 
@@ -30,6 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="Artitec API", version="1.0.0")
+
+# Mount uploads directory for serving static files (avatars, images, etc.)
+uploads_dir = Path(__file__).parent.parent / "uploads"
+uploads_dir.mkdir(exist_ok=True)  # Ensure directory exists
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 def custom_openapi():
     if app.openapi_schema:
@@ -77,6 +84,7 @@ app.include_router(user_router, tags=["Users"])
 app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
 app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
+app.include_router(community_admin.router, prefix="/v1/profiles/community-admins", tags=["Community Admin Profiles"])
 app.include_router(property.router, prefix="/v1/properties", tags=["Properties Profiles"])
 app.include_router(sales_rep.router, prefix="/v1/profiles/sales-reps", tags=["Sales Representative Profiles"])    
 

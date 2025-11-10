@@ -1,9 +1,13 @@
 # routes/profiles/buyers.py
 from __future__ import annotations
 from typing import List
+import base64
+import os
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from config.db import get_db
 from model.profiles.buyer import BuyerProfile, BuyerTour, BuyerDocument
@@ -45,11 +49,63 @@ def _ensure_user(db: Session, user_key: str | int) -> Users:
     return user
 
 # Resolve buyer_id (BuyerProfile.id) from a given internal users.id
-def _resolve_buyer_id(db: Session, internal_user_id: str) -> int:
+def _resolve_buyer_id(db: Session, internal_user_id: int) -> int:
+    """
+    Resolve buyer profile ID from internal user ID (integer).
+    Args:
+        db: Database session
+        internal_user_id: users.id (INTEGER, not string public_id)
+    Returns:
+        BuyerProfile.id (integer)
+    """
+    print(f"🔍 _resolve_buyer_id: Looking for user_id={internal_user_id} (type={type(internal_user_id)})")
     prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == internal_user_id).first()
     if not prof:
+        print(f"❌ _resolve_buyer_id: No buyer profile found for user_id={internal_user_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
+    print(f"✅ _resolve_buyer_id: Found buyer profile id={prof.id}")
     return int(prof.id)
+
+def _build_buyer_profile_out(profile: BuyerProfile, user: Users) -> dict:
+    """
+    Build a BuyerProfileOut response by combining BuyerProfile data with User data.
+    Returns a dict that FastAPI will serialize with the response_model.
+    """
+    print(f"🏗️ _build_buyer_profile_out: profile.display_name = {profile.display_name}")
+    print(f"🏗️ _build_buyer_profile_out: profile.first_name = {profile.first_name}, profile.last_name = {profile.last_name}")
+    print(f"🏗️ _build_buyer_profile_out: user.first_name = {user.first_name}, user.last_name = {user.last_name}")
+
+    return {
+        # BuyerProfile fields
+        "id": profile.id,
+        "user_id": user.public_id,
+        "display_name": profile.display_name,
+        "profile_image": profile.profile_image,
+        "bio": profile.bio,
+        "location": profile.location,
+        "website_url": profile.website_url,
+        "contact_email": profile.contact_email,
+        "contact_phone": profile.contact_phone,
+        "contact_preferred": profile.contact_preferred,
+        "sex": profile.sex,
+        "timeline": profile.timeline,
+        "financing_status": profile.financing_status,
+        "loan_program": profile.loan_program,
+        "household_income_usd": profile.household_income_usd,
+        "budget_min_usd": profile.budget_min_usd,
+        "budget_max_usd": profile.budget_max_usd,
+        "down_payment_percent": profile.down_payment_percent,
+        "lender_name": profile.lender_name,
+        "agent_name": profile.agent_name,
+        "extra": profile.extra,
+        "created_at": profile.created_at,
+        "updated_at": profile.updated_at,
+        # User fields (only fields that exist in Users model)
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "phone_e164": user.phone_e164,
+    }
 
 # ---------- Routes: Buyer Profile ----------
 
@@ -60,7 +116,7 @@ def get_buyer_profile(user_id: str, db: Session = Depends(get_db)):
     prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == uid).first()
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
-    return prof
+    return _build_buyer_profile_out(prof, user)
 
 @router.post("/{user_id}", response_model=BuyerProfileOut, status_code=status.HTTP_201_CREATED)
 def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = Depends(get_db)):
@@ -70,15 +126,16 @@ def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = De
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Buyer profile already exists")
 
+    # Use registration data as defaults if not provided in payload
     prof = BuyerProfile(
         user_id=uid,
-        display_name=payload.display_name,
-        avatar_symbol=payload.avatar_symbol,
+        display_name=payload.display_name or f"{user.first_name} {user.last_name}".strip(),
+        profile_image=payload.profile_image,
         location=payload.location,
         bio=payload.bio,
         sex=payload.sex,
-        contact_email=payload.contact_email,
-        contact_phone=payload.contact_phone,
+        contact_email=payload.contact_email or user.email,
+        contact_phone=payload.contact_phone or user.phone_e164,
         contact_preferred=(payload.contact_preferred or "email"),
         timeline=(payload.timeline or "exploring"),
         financing_status=(payload.financing_status or "unknown"),
@@ -92,9 +149,13 @@ def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = De
         extra=payload.extra,
     )
     db.add(prof)
+
+    # Mark onboarding as completed for this user
+    user.onboarding_completed = True
+
     db.commit()
     db.refresh(prof)
-    return prof
+    return _build_buyer_profile_out(prof, user)
 
 @router.patch("/{user_id}", response_model=BuyerProfileOut)
 def update_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = Depends(get_db)):
@@ -105,13 +166,77 @@ def update_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = De
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
 
     data = payload.model_dump(exclude_unset=True)
+    print(f"🔍 PATCH /buyers/{user_id}: Received data: {data}")
+    print(f"🔍 Before update - display_name: {prof.display_name}")
+
     for field, value in data.items():
+        print(f"  Setting {field} = {value}")
         setattr(prof, field, value)
+
+    print(f"🔍 After setattr - display_name: {prof.display_name}")
+
+    # Mark onboarding as completed for this user (in case it wasn't set during creation)
+    user.onboarding_completed = True
 
     db.add(prof)
     db.commit()
     db.refresh(prof)
-    return prof
+
+    print(f"🔍 After commit/refresh - display_name: {prof.display_name}")
+
+    return _build_buyer_profile_out(prof, user)
+
+# ---------- Routes: Avatar Upload ----------
+
+class AvatarUploadRequest(BaseModel):
+    image_base64: str
+    mime_type: str
+
+class AvatarUploadResponse(BaseModel):
+    profile_image: str
+
+@router.post("/{user_id}/avatar", response_model=AvatarUploadResponse)
+def upload_avatar(user_id: str, payload: AvatarUploadRequest, db: Session = Depends(get_db)):
+    """
+    Upload profile avatar image.
+    TODO: Configure storage backend (S3, Cloudflare R2, local filesystem, etc.)
+    """
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+    prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == uid).first()
+    if not prof:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
+
+    try:
+        # Decode base64 image
+        image_data = base64.b64decode(payload.image_base64)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base64 image: {str(e)}")
+
+    # TODO: Replace this with actual storage upload (S3, R2, etc.)
+    # For now, save to local filesystem as placeholder
+    upload_dir = os.path.join(os.getcwd(), "uploads", "avatars")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Generate unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ext = ".jpg" if "jpeg" in payload.mime_type.lower() else ".png"
+    filename = f"{user.public_id}_{timestamp}{ext}"
+    filepath = os.path.join(upload_dir, filename)
+
+    # Save file
+    with open(filepath, "wb") as f:
+        f.write(image_data)
+
+    # Generate URL (replace with your CDN URL in production)
+    profile_image_url = f"/uploads/avatars/{filename}"
+
+    # Update database
+    prof.profile_image = profile_image_url
+    db.add(prof)
+    db.commit()
+
+    return AvatarUploadResponse(profile_image=profile_image_url)
 
 # ---------- Routes: Tours ----------
 

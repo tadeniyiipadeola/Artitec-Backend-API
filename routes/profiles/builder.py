@@ -209,6 +209,14 @@ def create_builder_profile(
 
     obj = BuilderModel(**payload.model_dump(exclude_none=True))
     db.add(obj)
+
+    # Mark onboarding as completed for this user if user_id is set
+    if hasattr(obj, 'user_id') and obj.user_id:
+        from model.user import Users
+        user = db.query(Users).filter(Users.id == obj.user_id).first()
+        if user:
+            user.onboarding_completed = True
+
     db.commit()
     db.refresh(obj)
     return BuilderProfileOut.model_validate(obj)
@@ -228,6 +236,13 @@ def update_builder_profile(
     for k, v in data.items():
         if hasattr(obj, k):
             setattr(obj, k, v)
+
+    # Mark onboarding as completed for this user (in case it wasn't set during creation)
+    if hasattr(obj, 'user_id') and obj.user_id:
+        from model.user import Users
+        user = db.query(Users).filter(Users.id == obj.user_id).first()
+        if user:
+            user.onboarding_completed = True
 
     db.add(obj)
     db.commit()
