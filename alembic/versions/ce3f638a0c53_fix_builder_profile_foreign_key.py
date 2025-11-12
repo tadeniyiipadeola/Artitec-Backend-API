@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import text
 
 
 # revision identifiers, used by Alembic.
@@ -19,53 +20,43 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
-    # Fix BuilderProfile foreign key to reference users.id instead of users.public_id
+    """Upgrade schema - fix BuilderProfile foreign key to reference users.id instead of users.public_id"""
+
+    # Get connection to execute raw SQL
+    conn = op.get_bind()
 
     # Step 1: Drop existing foreign key constraint if it exists
-    # The constraint name may vary, so we use a try-except approach via raw SQL
-    op.execute("""
-        SET @constraint_name = (
-            SELECT CONSTRAINT_NAME
-            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-            WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'builder_profiles'
-            AND COLUMN_NAME IN ('public_id', 'user_id')
-            AND REFERENCED_TABLE_NAME = 'users'
-            LIMIT 1
-        );
+    result = conn.execute(text("""
+        SELECT CONSTRAINT_NAME
+        FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'builder_profiles'
+        AND COLUMN_NAME IN ('public_id', 'user_id')
+        AND REFERENCED_TABLE_NAME = 'users'
+        LIMIT 1
+    """))
 
-        SET @drop_fk_sql = IF(
-            @constraint_name IS NOT NULL,
-            CONCAT('ALTER TABLE builder_profiles DROP FOREIGN KEY ', @constraint_name),
-            'SELECT 1'
-        );
-
-        PREPARE stmt FROM @drop_fk_sql;
-        EXECUTE stmt;
-        DEALLOCATE PREPARE stmt;
-    """)
+    row = result.fetchone()
+    if row:
+        constraint_name = row[0]
+        conn.execute(text(f"ALTER TABLE builder_profiles DROP FOREIGN KEY {constraint_name}"))
 
     # Step 2: Check if column is named public_id and rename it to user_id if needed
-    op.execute("""
-        SET @column_exists = (
-            SELECT COUNT(*)
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'builder_profiles'
-            AND COLUMN_NAME = 'public_id'
-        );
+    result = conn.execute(text("""
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'builder_profiles'
+        AND COLUMN_NAME = 'public_id'
+    """))
 
-        SET @rename_sql = IF(
-            @column_exists > 0,
-            'ALTER TABLE builder_profiles CHANGE COLUMN public_id user_id BIGINT UNSIGNED NOT NULL',
-            'ALTER TABLE builder_profiles MODIFY COLUMN user_id BIGINT UNSIGNED NOT NULL'
-        );
-
-        PREPARE stmt FROM @rename_sql;
-        EXECUTE stmt;
-        DEALLOCATE PREPARE stmt;
-    """)
+    count = result.scalar()
+    if count > 0:
+        # Rename public_id to user_id and change to INT to match users.id
+        conn.execute(text("ALTER TABLE builder_profiles CHANGE COLUMN public_id user_id INT(11) NOT NULL"))
+    else:
+        # Just ensure user_id has correct type (INT to match users.id)
+        conn.execute(text("ALTER TABLE builder_profiles MODIFY COLUMN user_id INT(11) NOT NULL"))
 
     # Step 3: Add correct foreign key constraint
     op.create_foreign_key(
@@ -78,26 +69,18 @@ def upgrade() -> None:
     )
 
     # Step 4: Ensure unique index on user_id
-    op.execute("""
-        SET @index_exists = (
-            SELECT COUNT(*)
-            FROM INFORMATION_SCHEMA.STATISTICS
-            WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'builder_profiles'
-            AND INDEX_NAME = 'user_id'
-            AND NON_UNIQUE = 0
-        );
+    result = conn.execute(text("""
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'builder_profiles'
+        AND INDEX_NAME = 'user_id'
+        AND NON_UNIQUE = 0
+    """))
 
-        SET @create_index_sql = IF(
-            @index_exists = 0,
-            'CREATE UNIQUE INDEX user_id ON builder_profiles(user_id)',
-            'SELECT 1'
-        );
-
-        PREPARE stmt FROM @create_index_sql;
-        EXECUTE stmt;
-        DEALLOCATE PREPARE stmt;
-    """)
+    count = result.scalar()
+    if count == 0:
+        conn.execute(text("CREATE UNIQUE INDEX user_id ON builder_profiles(user_id)"))
 
 
 def downgrade() -> None:
@@ -107,14 +90,7 @@ def downgrade() -> None:
     op.drop_constraint('builder_profiles_ibfk_user', 'builder_profiles', type_='foreignkey')
 
     # Rename column back to public_id (if reverting to old broken state)
-    op.execute('ALTER TABLE builder_profiles CHANGE COLUMN user_id public_id BIGINT UNSIGNED')
+    conn = op.get_bind()
+    conn.execute(text('ALTER TABLE builder_profiles CHANGE COLUMN user_id public_id INT(11)'))
 
-    # Recreate the incorrect foreign key (for reference only - this will fail due to type mismatch)
-    # op.create_foreign_key(
-    #     'builder_profiles_ibfk_1',
-    #     'builder_profiles',
-    #     'users',
-    #     ['public_id'],
-    #     ['public_id'],  # This would fail: BIGINT -> VARCHAR
-    #     ondelete='SET NULL'
-    # )
+    # Note: Cannot recreate the incorrect foreign key as it would fail due to type mismatch

@@ -4,10 +4,9 @@ Exposes CRUD and list/search endpoints for builder profiles.
 - Path prefix: /v1/profiles/builders
 - Response schemas: Pydantic v2 (schema/builder.py)
 - DB: SQLAlchemy session via config.db.get_db
-- Includes: optional eager-load of properties & communities, follower metrics
+- Includes: optional eager-load of properties & communities
 
-If an auth dependency is not available yet, `current_user` will be None and
-`is_following` will remain null in responses.
+Routes follow the buyer profile pattern: /{user_id} where user_id is the public_id (UUID string).
 """
 from __future__ import annotations
 
@@ -21,22 +20,9 @@ try:
     from model.profiles.builder import SalesRep as SalesRepModel
 except Exception:
     SalesRepModel = None  # type: ignore
+from model.user import Users
 from config.db import get_db
 from config.security import get_current_user_optional
-
-# --- Project imports (adjust if your paths differ) ---------------------------
-try:
-    from config.db import get_db
-except Exception as e:  # pragma: no cover
-    raise ImportError("config.db.get_db is required for DB session dependency") from e
-
-# Optional auth (graceful fallback to None)
-try:
-    from config.security import get_current_user_optional  # returns User | None
-except Exception:  # pragma: no cover
-    def get_current_user_optional():  # type: ignore
-        return None
-
 
 try:
     from model.social.models import Follow  # for follower metrics
@@ -61,23 +47,18 @@ router = APIRouter()
 
 # ------------------------------ helpers -------------------------------------
 
+def _ensure_user(db: Session, user_id: str) -> Users:
+    """Resolve public_id (string) to Users model instance"""
+    user = db.query(Users).filter(Users.public_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
 def _parse_include(include: Optional[str]) -> Set[str]:
     if not include:
         return set()
     return {part.strip().lower() for part in include.split(",") if part.strip()}
-
-
-def _get_or_404(db: Session, org_id: int) -> BuilderModel:
-    obj = db.query(BuilderModel).filter(BuilderModel.org_id == org_id).first()
-    if not obj:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
-    return obj
-
-
-def _builder_id_by_org(db: Session, org_id: int) -> Optional[int]:
-    """Resolve BuilderProfile.id from external org_id. Returns None if not found."""
-    bp = db.query(BuilderModel.id).filter(BuilderModel.org_id == org_id).first()
-    return bp[0] if bp else None
 
 
 def _apply_includes(query, include: Set[str]):
@@ -86,39 +67,6 @@ def _apply_includes(query, include: Set[str]):
     if "communities" in include and hasattr(BuilderModel, "communities"):
         query = query.options(selectinload(BuilderModel.communities))
     return query
-
-
-def _attach_social_fields(
-    db: Session,
-    org_id: int,
-    out_obj: BuilderProfileOut,
-    current_user_id: Optional[str],
-) -> None:
-    """Mutates `out_obj` to set followers_count and is_following if Follow is available."""
-    if Follow is None:
-        return
-    # followers_count
-    followers_count = (
-        db.query(func.count())
-        .select_from(Follow)
-        .filter(Follow.target_type == "builder", Follow.target_id == org_id)
-        .scalar()
-    )
-    out_obj.followers_count = int(followers_count or 0)
-
-    # is_following (only if caller is authenticated)
-    if current_user_id:
-        exists_q = (
-            db.query(func.count())
-            .select_from(Follow)
-            .filter(
-                Follow.target_type == "builder",
-                Follow.target_id == org_id,
-                Follow.follower_user_id == current_user_id,
-            )
-            .scalar()
-        )
-        out_obj.is_following = bool(exists_q)
 
 
 # ------------------------------- routes -------------------------------------
@@ -146,7 +94,7 @@ def list_builder_profiles(
     # Text search across typical columns where available
     if q:
         ors = []
-        for col_name in ("company_name", "about", "notes"):
+        for col_name in ("name", "about"):
             if hasattr(BuilderModel, col_name):
                 ors.append(getattr(BuilderModel, col_name).ilike(f"%{q}%"))
         if ors:
@@ -156,93 +104,86 @@ def list_builder_profiles(
     if specialty and hasattr(BuilderModel, "specialties"):
         query = query.filter(text("JSON_CONTAINS(specialties, :needle)")).params(needle=f'"{specialty}"')
 
-    # City filter (either denormalized column or JSON search)
-    if city:
-        if hasattr(BuilderModel, "city"):
-            query = query.filter(BuilderModel.city.ilike(f"%{city}%"))
-        elif hasattr(BuilderModel, "service_areas"):
-            query = query.filter(text("JSON_SEARCH(service_areas, 'one', :c) IS NOT NULL")).params(c=city)
+    # City filter
+    if city and hasattr(BuilderModel, "city"):
+        query = query.filter(BuilderModel.city.ilike(f"%{city}%"))
 
     rows: Sequence[BuilderModel] = query.offset(offset).limit(limit).all()
-
-    out_list: List[BuilderProfileOut] = []
-    current_user_id = getattr(current_user, "id", None) if current_user else None
-    for r in rows:
-        out = BuilderProfileOut.model_validate(r)
-        # Attach social metrics
-        _attach_social_fields(db, getattr(r, "org_id"), out, current_user_id)
-        out_list.append(out)
-
-    return out_list
+    return [BuilderProfileOut.model_validate(r) for r in rows]
 
 
-@router.get("/{org_id}", response_model=BuilderProfileOut)
+@router.get("/{user_id}", response_model=BuilderProfileOut)
 def get_builder_profile(
     *,
     db: Session = Depends(get_db),
-    org_id: int,
+    user_id: str,
     include: Optional[str] = Query(None, description="Comma-separated includes: properties,communities"),
     current_user=Depends(get_current_user_optional),
 ):
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
     includes = _parse_include(include)
     query = db.query(BuilderModel)
     query = _apply_includes(query, includes)
-    obj = query.filter(BuilderModel.org_id == org_id).first()
+
+    obj = query.filter(BuilderModel.user_id == uid).first()
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
 
-    out = BuilderProfileOut.model_validate(obj)
-    _attach_social_fields(db, org_id, out, getattr(current_user, "id", None) if current_user else None)
-    return out
+    return BuilderProfileOut.model_validate(obj)
 
 
-@router.post("/", response_model=BuilderProfileOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{user_id}", response_model=BuilderProfileOut, status_code=status.HTTP_201_CREATED)
 def create_builder_profile(
     *,
     db: Session = Depends(get_db),
+    user_id: str,
     payload: BuilderProfileCreate,
 ):
-    # Ensure unique org_id
-    exists = db.query(BuilderModel).filter(BuilderModel.org_id == payload.org_id).first()
-    if exists:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Profile for this org_id already exists")
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
 
-    obj = BuilderModel(**payload.model_dump(exclude_none=True))
+    # Check if builder profile already exists for this user
+    existing = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Builder profile already exists for this user")
+
+    # Create builder profile
+    data = payload.model_dump(exclude_none=True)
+    obj = BuilderModel(**data, user_id=uid)
     db.add(obj)
 
-    # Mark onboarding as completed for this user if user_id is set
-    if hasattr(obj, 'user_id') and obj.user_id:
-        from model.user import Users
-        user = db.query(Users).filter(Users.id == obj.user_id).first()
-        if user:
-            user.onboarding_completed = True
+    # Mark onboarding as completed
+    user.onboarding_completed = True
 
     db.commit()
     db.refresh(obj)
     return BuilderProfileOut.model_validate(obj)
 
 
-@router.put("/{org_id}", response_model=BuilderProfileOut)
-@router.patch("/{org_id}", response_model=BuilderProfileOut)
+@router.put("/{user_id}", response_model=BuilderProfileOut)
+@router.patch("/{user_id}", response_model=BuilderProfileOut)
 def update_builder_profile(
     *,
     db: Session = Depends(get_db),
-    org_id: int,
+    user_id: str,
     payload: BuilderProfileUpdate,
 ):
-    obj = _get_or_404(db, org_id)
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
+    obj = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
 
     data = payload.model_dump(exclude_none=True)
     for k, v in data.items():
         if hasattr(obj, k):
             setattr(obj, k, v)
 
-    # Mark onboarding as completed for this user (in case it wasn't set during creation)
-    if hasattr(obj, 'user_id') and obj.user_id:
-        from model.user import Users
-        user = db.query(Users).filter(Users.id == obj.user_id).first()
-        if user:
-            user.onboarding_completed = True
+    # Mark onboarding as completed (in case it wasn't set during creation)
+    user.onboarding_completed = True
 
     db.add(obj)
     db.commit()
@@ -250,52 +191,75 @@ def update_builder_profile(
     return BuilderProfileOut.model_validate(obj)
 
 
-@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_builder_profile(*, db: Session = Depends(get_db), org_id: int):
-    obj = _get_or_404(db, org_id)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_builder_profile(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str
+):
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
+    obj = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
     db.delete(obj)
     db.commit()
     return None
 
-# --------------------------- sales reps (scoped) ---------------------------
 
-@router.get("/{org_id}/sales-reps", response_model=List[SalesRepOut])
-def list_sales_reps(
+# --------------------------- sales reps (scoped by builder user_id) ---------------------------
+
+@router.get("/{user_id}/sales-reps", response_model=List[SalesRepOut])
+def list_builder_sales_reps(
     *,
     db: Session = Depends(get_db),
-    org_id: int,
+    user_id: str,
 ):
-    builder_pk = _builder_id_by_org(db, org_id)
-    if not builder_pk:
+    """List all sales reps for a specific builder (by builder's user public_id)"""
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
     if SalesRepModel is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
 
     rows = (
         db.query(SalesRepModel)
-        .filter(SalesRepModel.builder_id == builder_pk)
+        .filter(SalesRepModel.builder_id == builder.id)
         .order_by(SalesRepModel.full_name.asc())
         .all()
     )
     return [SalesRepOut.model_validate(r) for r in rows]
 
 
-@router.post("/{org_id}/sales-reps", response_model=SalesRepOut, status_code=status.HTTP_201_CREATED)
-def create_sales_rep(
+@router.post("/{user_id}/sales-reps", response_model=SalesRepOut, status_code=status.HTTP_201_CREATED)
+def create_builder_sales_rep(
     *,
     db: Session = Depends(get_db),
-    org_id: int,
+    user_id: str,
     payload: SalesRepCreate,
 ):
-    builder_pk = _builder_id_by_org(db, org_id)
-    if not builder_pk:
+    """Create a sales rep for a specific builder (by builder's user public_id)"""
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
     if SalesRepModel is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
 
-    # Force the builder_id to the resolved builder PK to prevent cross-org creation
+    # Force the builder_id to the resolved builder PK to prevent cross-builder creation
     data = payload.model_dump(exclude_none=True)
-    data["builder_id"] = builder_pk
+    data["builder_id"] = builder.id
 
     obj = SalesRepModel(**data)
     db.add(obj)
@@ -304,24 +268,30 @@ def create_sales_rep(
     return SalesRepOut.model_validate(obj)
 
 
-@router.put("/{org_id}/sales-reps/{rep_id}", response_model=SalesRepOut)
-@router.patch("/{org_id}/sales-reps/{rep_id}", response_model=SalesRepOut)
-def update_sales_rep(
+@router.put("/{user_id}/sales-reps/{rep_id}", response_model=SalesRepOut)
+@router.patch("/{user_id}/sales-reps/{rep_id}", response_model=SalesRepOut)
+def update_builder_sales_rep(
     *,
     db: Session = Depends(get_db),
-    org_id: int,
+    user_id: str,
     rep_id: int,
     payload: SalesRepUpdate,
 ):
-    builder_pk = _builder_id_by_org(db, org_id)
-    if not builder_pk:
+    """Update a sales rep for a specific builder (by builder's user public_id)"""
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
     if SalesRepModel is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
 
     obj = db.query(SalesRepModel).filter(
         SalesRepModel.id == rep_id,
-        SalesRepModel.builder_id == builder_pk
+        SalesRepModel.builder_id == builder.id
     ).first()
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sales rep not found for this builder")
@@ -340,22 +310,28 @@ def update_sales_rep(
     return SalesRepOut.model_validate(obj)
 
 
-@router.delete("/{org_id}/sales-reps/{rep_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_sales_rep(
+@router.delete("/{user_id}/sales-reps/{rep_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_builder_sales_rep(
     *,
     db: Session = Depends(get_db),
-    org_id: int,
+    user_id: str,
     rep_id: int,
 ):
-    builder_pk = _builder_id_by_org(db, org_id)
-    if not builder_pk:
+    """Delete a sales rep for a specific builder (by builder's user public_id)"""
+    user = _ensure_user(db, user_id)
+    uid = int(user.id)
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
     if SalesRepModel is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="SalesRep model not available")
 
     obj = db.query(SalesRepModel).filter(
         SalesRepModel.id == rep_id,
-        SalesRepModel.builder_id == builder_pk
+        SalesRepModel.builder_id == builder.id
     ).first()
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sales rep not found for this builder")

@@ -139,15 +139,27 @@ class BuyerProfileIn(BaseModel):
     # Identity / display
     user_id: Optional[str] = None  # FK to users.public_id
     display_name: Optional[str] = None
+    first_name: Optional[str] = Field(None, max_length=120)
+    last_name: Optional[str] = Field(None, max_length=120)
     profile_image: Optional[str] = None  # URL to uploaded profile image
     bio: Optional[str] = None
     location: Optional[str] = None
-    website_url: Optional[str] = None
+    website_url: Optional[str] = Field(None, max_length=512)
 
-    # Contact
+    # Contact - Canonical fields (preferred)
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = Field(None, max_length=32)
+
+    # Contact - Legacy fields (for backward compatibility)
     contact_email: Optional[EmailStr] = None
-    contact_phone: Optional[str] = None
+    contact_phone: Optional[str] = Field(None, max_length=32)
     contact_preferred: Optional[PreferredChannel] = "email"
+
+    # Address
+    address: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=120)
+    state: Optional[str] = Field(None, max_length=64)
+    zip_code: Optional[str] = Field(None, max_length=20)
 
     # Core attributes
     sex: Optional[Sex] = None
@@ -156,12 +168,12 @@ class BuyerProfileIn(BaseModel):
     # Financing snapshot
     financing_status: Optional[FinancingStatus] = "unknown"
     loan_program: Optional[LoanProgram] = None
-    household_income_usd: Optional[int] = None
-    budget_min_usd: Optional[int] = None
-    budget_max_usd: Optional[int] = None
+    household_income_usd: Optional[int] = Field(None, ge=0)
+    budget_min_usd: Optional[int] = Field(None, ge=0)
+    budget_max_usd: Optional[int] = Field(None, ge=0)
     down_payment_percent: Optional[int] = Field(None, ge=0, le=100)
-    lender_name: Optional[str] = None
-    agent_name: Optional[str] = None
+    lender_name: Optional[str] = Field(None, max_length=255)
+    agent_name: Optional[str] = Field(None, max_length=255)
 
     # Flexible metadata
     extra: Optional[Dict[str, Any]] = None
@@ -217,18 +229,54 @@ class BuyerProfileIn(BaseModel):
             return to_int_or_none(v)
 
 
-class BuyerProfileOut(BuyerProfileIn):
+class BuyerProfileOut(BaseModel):
+    # Primary fields
     id: int                      # buyer_profiles.id
-    user_id: str                 # FK to users.public_id (string in the provided model)
+    user_id: str                 # FK to users.public_id (string)
 
-    # User fields (from users table) - Required
-    first_name: str              # users.first_name
-    last_name: str               # users.last_name
-    email: str                   # users.email
+    # Identity / display
+    display_name: Optional[str] = None
+    first_name: str              # From buyer_profiles (or users as fallback)
+    last_name: str               # From buyer_profiles (or users as fallback)
+    profile_image: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    website_url: Optional[str] = None
 
-    # User fields (from users table) - Optional
-    phone_e164: Optional[str] = None    # users.phone_e164
+    # Contact - Canonical fields
+    email: str                   # From buyer_profiles (or users as fallback)
+    phone: Optional[str] = None  # From buyer_profiles
+    phone_e164: Optional[str] = None  # From users.phone_e164
 
+    # Contact - Legacy fields
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    contact_preferred: PreferredChannel = "email"
+
+    # Address
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+
+    # Core attributes
+    sex: Optional[Sex] = None
+    timeline: BuyTimeline = "exploring"
+
+    # Financing snapshot
+    financing_status: FinancingStatus = "unknown"
+    loan_program: Optional[LoanProgram] = None
+    household_income_usd: Optional[int] = None
+    budget_min_usd: Optional[int] = None
+    budget_max_usd: Optional[int] = None
+    down_payment_percent: Optional[int] = None
+    lender_name: Optional[str] = None
+    agent_name: Optional[str] = None
+
+    # Flexible metadata
+    extra: Optional[Dict[str, Any]] = None
+
+    # Timestamps
     created_at: datetime
     updated_at: datetime
 

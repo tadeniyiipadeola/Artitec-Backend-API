@@ -43,9 +43,9 @@ class BuyerProfile(Base):
     __tablename__ = "buyer_profiles"
 
     # Primary key for buyer profile (used as buyer_profile_id in API)
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    # One-to-one with users.id (unique)
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # One-to-one with users.id (unique) - Changed to INT to match users.id
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
 
     # Identity / display
     display_name = Column(String(255), nullable=True)
@@ -133,7 +133,7 @@ class BuyerPreference(Base):
     __tablename__ = "buyer_preferences"
 
     buyer_id = Column(
-        MyBIGINT(unsigned=True),
+        Integer,
         ForeignKey("buyer_profiles.id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -179,11 +179,11 @@ class BuyerTour(Base):
 
     __tablename__ = "buyer_tours"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # owner (1 buyer per tour)
     buyer_id = Column(
-        MyBIGINT(unsigned=True),
+        Integer,
         ForeignKey("buyer_profiles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -191,7 +191,7 @@ class BuyerTour(Base):
 
     # target property
     property_id = Column(
-        MyBIGINT(unsigned=True),
+        Integer,
         ForeignKey("properties.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -231,11 +231,11 @@ class BuyerDocument(Base):
 
     __tablename__ = "buyer_documents"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # owner (ties to buyer profile)
     buyer_id = Column(
-        MyBIGINT(unsigned=True),
+        Integer,
         ForeignKey("buyer_profiles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -243,7 +243,7 @@ class BuyerDocument(Base):
 
     # optional linkage to a property (e.g., specific home offer)
     property_id = Column(
-        MyBIGINT(unsigned=True),
+        Integer,
         ForeignKey("properties.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -282,7 +282,7 @@ class TourStatus(Base):
 
     __tablename__ = "tour_statuses"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(64), unique=True, nullable=False)  # e.g., 'requested', 'confirmed'
     label = Column(String(255), nullable=False)             # e.g., 'Requested', 'Confirmed'
     description = Column(Text, nullable=True)
@@ -310,7 +310,7 @@ class FinancingStatus(Base):
 
     __tablename__ = "financing_statuses"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(64), unique=True, nullable=False)   # e.g., 'pre_approved', 'cash', 'needs_pre_approval'
     label = Column(String(255), nullable=False)              # e.g., 'Pre-Approved', 'Cash Buyer'
     description = Column(Text, nullable=True)
@@ -338,7 +338,7 @@ class LoanProgram(Base):
 
     __tablename__ = "loan_programs"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(64), unique=True, nullable=False)   # e.g., 'conventional', 'fha', 'va', 'usda', 'jumbo'
     label = Column(String(255), nullable=False)              # e.g., 'Conventional Loan', 'FHA Loan'
     description = Column(Text, nullable=True)
@@ -366,7 +366,7 @@ class BuyingTimeline(Base):
 
     __tablename__ = "buying_timelines"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(64), unique=True, nullable=False)   # e.g., 'immediately', 'one_to_three_months'
     label = Column(String(255), nullable=False)              # e.g., 'Immediately', '1–3 Months'
     description = Column(Text, nullable=True)
@@ -394,7 +394,7 @@ class PreferredChannel(Base):
 
     __tablename__ = "preferred_channels"
 
-    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(64), unique=True, nullable=False)   # e.g., 'email', 'phone', 'sms', 'in_app'
     label = Column(String(255), nullable=False)              # e.g., 'Email', 'Phone Call', 'Text Message', 'In-App'
     description = Column(Text, nullable=True)

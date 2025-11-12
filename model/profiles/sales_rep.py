@@ -10,7 +10,8 @@ class SalesRep(Base):
     builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False)
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=True)
 
-    full_name = Column(String(255), nullable=False)
+    first_name = Column(String(128), nullable=False)
+    last_name = Column(String(128), nullable=False)
     title = Column(String(128))
     email = Column(String(255))
     phone = Column(String(64))

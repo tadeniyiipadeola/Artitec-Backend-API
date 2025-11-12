@@ -150,10 +150,25 @@ def get_community(
 def create_community(
     *, db: Session = Depends(get_db), payload: CommunityCreate
 ):
-    obj = CommunityModel(**payload.model_dump(exclude_none=True))
+    # Extract amenity_names before creating community
+    amenity_names = payload.amenity_names if hasattr(payload, 'amenity_names') else []
+
+    # Create community (exclude amenity_names from model_dump)
+    data = payload.model_dump(exclude_none=True, exclude={'amenity_names'})
+    obj = CommunityModel(**data)
     db.add(obj)
     db.commit()
     db.refresh(obj)
+
+    # Create amenity records if any provided
+    if amenity_names:
+        for name in amenity_names:
+            if name and name.strip():  # Skip empty strings
+                amenity = AmenityModel(community_id=obj.id, name=name.strip())
+                db.add(amenity)
+        db.commit()
+        db.refresh(obj)
+
     return CommunityOut.model_validate(obj)
 
 
@@ -163,12 +178,32 @@ def update_community(
     *, db: Session = Depends(get_db), community_id: int, payload: CommunityUpdate
 ):
     obj = _get_or_404(db, community_id)
-    data = payload.model_dump(exclude_none=True)
+
+    # Extract amenity_names if provided
+    amenity_names = None
+    if hasattr(payload, 'amenity_names') and payload.amenity_names is not None:
+        amenity_names = payload.amenity_names
+
+    # Update community fields (exclude amenity_names)
+    data = payload.model_dump(exclude_none=True, exclude={'amenity_names'})
     for k, v in data.items():
         if hasattr(obj, k):
             setattr(obj, k, v)
     db.add(obj)
     db.commit()
+
+    # If amenity_names provided, replace all amenities
+    if amenity_names is not None:
+        # Delete existing amenities
+        db.query(AmenityModel).filter(AmenityModel.community_id == community_id).delete()
+
+        # Create new amenities
+        for name in amenity_names:
+            if name and name.strip():
+                amenity = AmenityModel(community_id=obj.id, name=name.strip())
+                db.add(amenity)
+        db.commit()
+
     db.refresh(obj)
     return CommunityOut.model_validate(obj)
 

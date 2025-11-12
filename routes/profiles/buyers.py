@@ -76,19 +76,40 @@ def _build_buyer_profile_out(profile: BuyerProfile, user: Users) -> dict:
     print(f"🏗️ _build_buyer_profile_out: user.first_name = {user.first_name}, user.last_name = {user.last_name}")
 
     return {
-        # BuyerProfile fields
+        # Primary fields
         "id": profile.id,
         "user_id": user.public_id,
+
+        # Identity / display
         "display_name": profile.display_name,
+        "first_name": profile.first_name or user.first_name,
+        "last_name": profile.last_name or user.last_name,
         "profile_image": profile.profile_image,
         "bio": profile.bio,
         "location": profile.location,
         "website_url": profile.website_url,
+
+        # Contact - Canonical fields
+        "email": profile.email or user.email,
+        "phone": profile.phone,
+        "phone_e164": user.phone_e164,
+
+        # Contact - Legacy fields
         "contact_email": profile.contact_email,
         "contact_phone": profile.contact_phone,
         "contact_preferred": profile.contact_preferred,
+
+        # Address
+        "address": profile.address,
+        "city": profile.city,
+        "state": profile.state,
+        "zip_code": profile.zip_code,
+
+        # Core attributes
         "sex": profile.sex,
         "timeline": profile.timeline,
+
+        # Financing snapshot
         "financing_status": profile.financing_status,
         "loan_program": profile.loan_program,
         "household_income_usd": profile.household_income_usd,
@@ -97,14 +118,13 @@ def _build_buyer_profile_out(profile: BuyerProfile, user: Users) -> dict:
         "down_payment_percent": profile.down_payment_percent,
         "lender_name": profile.lender_name,
         "agent_name": profile.agent_name,
+
+        # Flexible metadata
         "extra": profile.extra,
+
+        # Timestamps
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
-        # User fields (only fields that exist in Users model)
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "email": user.email,
-        "phone_e164": user.phone_e164,
     }
 
 # ---------- Routes: Buyer Profile ----------
@@ -126,18 +146,39 @@ def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = De
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Buyer profile already exists")
 
-    # Use registration data as defaults if not provided in payload
+    # Smart defaults: use payload values, fall back to user data where applicable
     prof = BuyerProfile(
         user_id=uid,
-        display_name=payload.display_name or f"{user.first_name} {user.last_name}".strip(),
+
+        # Identity / display
+        display_name=payload.display_name or f"{payload.first_name or user.first_name} {payload.last_name or user.last_name}".strip(),
+        first_name=payload.first_name or user.first_name,
+        last_name=payload.last_name or user.last_name,
         profile_image=payload.profile_image,
-        location=payload.location,
         bio=payload.bio,
-        sex=payload.sex,
-        contact_email=payload.contact_email or user.email,
-        contact_phone=payload.contact_phone or user.phone_e164,
+        location=payload.location,
+        website_url=payload.website_url,
+
+        # Contact - Canonical fields (prioritize payload, fallback to user or legacy fields)
+        email=payload.email or payload.contact_email or user.email,
+        phone=payload.phone or payload.contact_phone or user.phone_e164,
+
+        # Contact - Legacy fields (for backward compatibility)
+        contact_email=payload.contact_email or payload.email or user.email,
+        contact_phone=payload.contact_phone or payload.phone or user.phone_e164,
         contact_preferred=(payload.contact_preferred or "email"),
+
+        # Address
+        address=payload.address,
+        city=payload.city,
+        state=payload.state,
+        zip_code=payload.zip_code,
+
+        # Core attributes
+        sex=payload.sex,
         timeline=(payload.timeline or "exploring"),
+
+        # Financing snapshot
         financing_status=(payload.financing_status or "unknown"),
         loan_program=payload.loan_program,
         household_income_usd=payload.household_income_usd,
@@ -146,6 +187,8 @@ def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = De
         down_payment_percent=payload.down_payment_percent,
         lender_name=payload.lender_name,
         agent_name=payload.agent_name,
+
+        # Flexible metadata
         extra=payload.extra,
     )
     db.add(prof)

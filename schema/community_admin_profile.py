@@ -18,7 +18,8 @@ except Exception:
 # -------------------- Base Schema --------------------
 class CommunityAdminProfileBase(BaseModel):
     # Profile/Display
-    display_name: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    first_name: constr(strip_whitespace=True, max_length=128)
+    last_name: constr(strip_whitespace=True, max_length=128)
     profile_image: Optional[constr(strip_whitespace=True, max_length=500)] = None
     bio: Optional[str] = None
     title: Optional[constr(strip_whitespace=True, max_length=128)] = None
@@ -47,7 +48,8 @@ class CommunityAdminProfileCreate(CommunityAdminProfileBase):
 # -------------------- Update Schema --------------------
 class CommunityAdminProfileUpdate(BaseModel):
     """Update an existing community admin profile - all fields optional"""
-    display_name: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    first_name: Optional[constr(strip_whitespace=True, max_length=128)] = None
+    last_name: Optional[constr(strip_whitespace=True, max_length=128)] = None
     profile_image: Optional[constr(strip_whitespace=True, max_length=500)] = None
     bio: Optional[str] = None
     title: Optional[constr(strip_whitespace=True, max_length=128)] = None
@@ -69,11 +71,6 @@ class CommunityAdminProfileOut(CommunityAdminProfileBase):
     id: int
     user_id: int
     community_id: int
-
-    # Include user info from relationship (optional)
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    email: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime

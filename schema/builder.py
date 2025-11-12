@@ -13,51 +13,44 @@ from pydantic import BaseModel, ConfigDict, HttpUrl, conint, confloat
 
 
 # ------------------------------------------------------------
-# Shared fields
+# Shared fields (matching model/profiles/builder.py)
 # ------------------------------------------------------------
 class BuilderProfileBase(BaseModel):
-    # Identity/description
-    license_number: Optional[str] = None
-    company_name: Optional[str] = None
+    # Core fields
+    name: str  # Company/builder name (required)
+    website: Optional[str] = None
+    specialties: Optional[List[str]] = None  # e.g., ["Custom Homes", "Townhomes"]
+    rating: Optional[confloat(ge=0, le=5)] = None
+    communities_served: Optional[List[str]] = None  # e.g., ["Oak Meadows", "Pine Ridge"]
+
+    # Optional extended fields
     about: Optional[str] = None
-    notes: Optional[str] = None
-
-    # JSON-like fields represented as Python lists for convenience
-    specialties: Optional[List[str]] = None  # e.g., ["Custom Homes", "Renovation"]
-    service_areas: Optional[List[str]] = None  # e.g., ["Houston, TX", "Kingwood, TX"]
-
-    years_in_business: Optional[conint(ge=0, le=200)] = None
-    rating_avg: Optional[confloat(ge=0, le=5)] = None
-    rating_count: Optional[conint(ge=0)] = 0
-
-    # Contact & presence
-    website_url: Optional[HttpUrl] = None
     phone: Optional[str] = None
     email: Optional[str] = None
-
-    # Addressing (denormalized for convenience)
-    address: Optional[str] = None
+    address: Optional[str] = None  # Street address
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
+    verified: Optional[int] = 0  # 0 = not verified, 1 = verified
 
-    # Media
-    logo_url: Optional[HttpUrl] = None
-
-    # Relationships (IDs for simple updates; expanded objects in Out model)
-    property_ids: Optional[List[int]] = None  # portfolio
-    community_ids: Optional[List[int]] = None  # active communities
+    # Profile metadata
+    title: Optional[str] = None  # e.g., "Owner", "Regional Manager"
+    bio: Optional[str] = None
+    socials: Optional[dict] = None  # {"linkedin": "...", "x": "..."}
 
 
 # ------------------------------------------------------------
 # Create / Update models
 # ------------------------------------------------------------
 class BuilderProfileCreate(BuilderProfileBase):
-    org_id: int
+    # user_id will be resolved from URL path parameter (public_id) in the route
+    # No need to pass it in the payload
+    pass
 
 
 class BuilderProfileUpdate(BuilderProfileBase):
     # All fields optional for PATCH/PUT semantics
+    name: Optional[str] = None  # Make name optional for updates
     pass
 
 
@@ -86,7 +79,8 @@ class CommunityRef(BaseModel):
 # SalesRep schemas
 # ------------------------------------------------------------
 class SalesRepBase(BaseModel):
-    full_name: str
+    first_name: str
+    last_name: str
     title: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
@@ -100,8 +94,18 @@ class SalesRepBase(BaseModel):
 class SalesRepCreate(SalesRepBase):
     builder_id: int
 
-class SalesRepUpdate(SalesRepBase):
-    pass
+class SalesRepUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    title: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    avatar_url: Optional[HttpUrl] = None
+    region: Optional[str] = None
+    office_address: Optional[str] = None
+    verified: Optional[bool] = None
+    builder_id: Optional[int] = None
+    community_id: Optional[int] = None
 
 class SalesRepOut(SalesRepBase):
     id: int
@@ -117,13 +121,15 @@ class SalesRepOut(SalesRepBase):
 # Out model
 # ------------------------------------------------------------
 class BuilderProfileOut(BuilderProfileBase):
-    org_id: int
+    id: int
+    build_id: str  # e.g., "B_329_XXX_XXX_XXX_XXX"
+    user_id: int
 
-    # Social / follower metrics (server-derived)
-    followers_count: int = 0
-    is_following: Optional[bool] = None  # whether the current auth user follows this builder
+    # Timestamps
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
-    # Expanded relationships
+    # Expanded relationships (optional, loaded via includes)
     properties: Optional[List[PropertyRef]] = None
     communities: Optional[List[CommunityRef]] = None
 

@@ -44,7 +44,8 @@ class CommunityAdminProfile(Base):
     )
 
     # Profile/Display fields
-    display_name = Column(String(255))
+    first_name = Column(String(128), nullable=False)
+    last_name = Column(String(128), nullable=False)
     profile_image = Column(String(500))  # URL to profile image
     bio = Column(Text)
     title = Column(String(128))  # e.g., "HOA President", "Community Manager"

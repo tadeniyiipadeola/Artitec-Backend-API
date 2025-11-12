@@ -24,6 +24,7 @@ class Community(Base):
     public_id = Column(String(64), unique=True, nullable=False)  # mirrors Swift's `id` string (UUID)
     name = Column(String(255), nullable=False)
     city = Column(String(255))
+    state = Column(String(64))
     postal_code = Column(String(20))
 
     # Finance
@@ -42,8 +43,13 @@ class Community(Base):
     founded_year = Column(Integer)
     member_count = Column(Integer, default=0)
 
+    # Development
+    development_stage = Column(String(64))  # Phase 1-5, Completed
+    enterprise_number_hoa = Column(String(255))  # Registration/Enterprise ID
+
     # Media
     intro_video_url = Column(String(1024))
+    community_website_url = Column(String(1024))
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(

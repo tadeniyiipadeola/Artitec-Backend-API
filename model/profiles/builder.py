@@ -50,7 +50,8 @@ class BuilderProfile(Base):
     build_id = Column(String(64), unique=True, nullable=False, default=_gen_builder_public_id)
 
     # One-to-one link to platform user (the account that owns/manages this builder)
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    # Changed to Integer to match users.id data type in database
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
 
     # Core fields
     name = Column(String(255), nullable=False)
@@ -63,7 +64,10 @@ class BuilderProfile(Base):
     about = Column(Text)
     phone = Column(String(64))
     email = Column(String(255))
-    address = Column(String(255))
+    address = Column(String(255))  # Street address
+    city = Column(String(255))
+    state = Column(String(64))
+    postal_code = Column(String(20))
     verified = Column(Integer, default=0)        # 0 = not verified, 1 = verified
 
     # Former BuilderProfile metadata (merged here)

@@ -240,6 +240,7 @@ class CommunityBase(BaseModel):
 
     # Location
     city: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    state: Optional[constr(strip_whitespace=True, max_length=64)] = None
     postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None
 
     # Finance / Meta
@@ -257,12 +258,18 @@ class CommunityBase(BaseModel):
     founded_year: Optional[int] = None
     member_count: Optional[int] = 0
 
+    # Development
+    development_stage: Optional[constr(strip_whitespace=True, max_length=64)] = None
+    enterprise_number_hoa: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
     # Media
     intro_video_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
+    community_website_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
 
 
 class CommunityCreate(CommunityBase):
-    pass
+    # Optional: Accept list of amenity names during creation
+    amenity_names: Optional[List[str]] = Field(default_factory=list, description="List of amenity names to create (e.g., ['Pool', 'Fitness Center', 'Dog Park'])")
 
 
 class CommunityUpdate(BaseModel):
@@ -270,6 +277,7 @@ class CommunityUpdate(BaseModel):
     name: Optional[constr(strip_whitespace=True, min_length=1, max_length=255)] = None
 
     city: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    state: Optional[constr(strip_whitespace=True, max_length=64)] = None
     postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None
 
     community_dues: Optional[constr(strip_whitespace=True, max_length=64)] = None
@@ -285,7 +293,14 @@ class CommunityUpdate(BaseModel):
     founded_year: Optional[int] = None
     member_count: Optional[int] = None
 
+    development_stage: Optional[constr(strip_whitespace=True, max_length=64)] = None
+    enterprise_number_hoa: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
     intro_video_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
+    community_website_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
+
+    # Optional: Replace all amenities with new list
+    amenity_names: Optional[List[str]] = Field(None, description="If provided, replaces all existing amenities with this list")
 
 
 class CommunityOut(CommunityBase):

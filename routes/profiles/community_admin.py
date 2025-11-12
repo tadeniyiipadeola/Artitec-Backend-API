@@ -42,12 +42,13 @@ def _get_profile_by_user_id(db: Session, user_id: int) -> Optional[CommunityAdmi
 
 
 def _build_profile_out(profile: CommunityAdminProfile) -> dict:
-    """Build response dict with user info included"""
+    """Build response dict with profile data"""
     data = {
         "id": profile.id,
         "user_id": profile.user_id,
         "community_id": profile.community_id,
-        "display_name": profile.display_name,
+        "first_name": profile.first_name,
+        "last_name": profile.last_name,
         "profile_image": profile.profile_image,
         "bio": profile.bio,
         "title": profile.title,
@@ -61,12 +62,6 @@ def _build_profile_out(profile: CommunityAdminProfile) -> dict:
         "created_at": profile.created_at,
         "updated_at": profile.updated_at,
     }
-
-    # Add user info if available
-    if profile.user:
-        data["first_name"] = profile.user.first_name
-        data["last_name"] = profile.user.last_name
-        data["email"] = profile.user.email
 
     return data
 
@@ -130,19 +125,21 @@ def create_community_admin_profile(
     payload: CommunityAdminProfileCreate,
     current_user: Users = Depends(get_current_user)
 ):
-    """Create a new community admin profile"""
-    print(f"📝 POST /community-admins: user_id={payload.user_id}, community_id={payload.community_id}")
+    """Create a new community admin profile for the current user"""
+    print(f"📝 POST /community-admins: user_id={current_user.id}, community_id={payload.community_id}")
 
     # Check if profile already exists for this user
-    existing = _get_profile_by_user_id(db, payload.user_id)
+    existing = _get_profile_by_user_id(db, current_user.id)
     if existing:
         raise HTTPException(
             status_code=400,
-            detail=f"Community admin profile already exists for user {payload.user_id}"
+            detail=f"Community admin profile already exists for current user"
         )
 
-    # Create new profile
-    profile = CommunityAdminProfile(**payload.model_dump())
+    # Create new profile with current user's ID
+    profile_data = payload.model_dump()
+    profile_data["user_id"] = current_user.id  # Override user_id with current user
+    profile = CommunityAdminProfile(**profile_data)
     db.add(profile)
     db.commit()
     db.refresh(profile)
