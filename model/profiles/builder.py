@@ -47,11 +47,12 @@ class BuilderProfile(Base):
     __tablename__ = "builder_profiles"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    build_id = Column(String(64), unique=True, nullable=False, default=_gen_builder_public_id)
+    # Builder ID for API (e.g., BLD-1699564234-X3P8Q1)
+    builder_id = Column(String(50), unique=True, nullable=False, index=True)
 
     # One-to-one link to platform user (the account that owns/manages this builder)
-    # Changed to Integer to match users.id data type in database
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    # FK to users.user_id (String)
+    user_id = Column(String(50), ForeignKey("users.user_id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
 
     # Core fields
     name = Column(String(255), nullable=False)

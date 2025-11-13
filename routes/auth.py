@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from config.db import get_db
 from config.settings import REFRESH_TTL_DAYS
-from model.user import Users, UserCredential, EmailVerification, SessionToken, Role
+from model.user import Users, UserCredential, EmailVerification, SessionToken, Role, validate_role, get_role_display_name
 from model.profiles.buyer import BuyerProfile
 from schema.auth import (
     OrgLookupOut, RoleSelectionIn,
@@ -78,7 +78,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         first_name=body.first_name,
         last_name=body.last_name,
         phone_e164=body.phone_e164,
-        role_id=role_row.id
+        role=role_row.key  # Direct role string instead of FK
     )
     db.add(u)
     db.flush()
@@ -113,9 +113,9 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
 
     access = make_access_token(u.public_id, u.id, u.email)
     logger.info("Registration successful for user email=%s", body.email)
-    # Ensure role relationship is loaded for UserOut
+    # Build role dict for response
     if u.role:
-        role_out = {"key": u.role.key, "name": u.role.name}
+        role_out = {"key": u.role, "name": get_role_display_name(u.role)}
     else:
         role_out = None
 
@@ -171,9 +171,9 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     logger.info("Login successful for user id=%s", u.id)
 
     logger.info("Login completed successfully for email=%s", body.email)
-    # Ensure role relationship is loaded for UserOut
+    # Build role dict for response
     if u.role:
-        role_out = {"key": u.role.key, "name": u.role.name}
+        role_out = {"key": u.role, "name": get_role_display_name(u.role)}
     else:
         role_out = None
 
@@ -417,7 +417,7 @@ def role_selection_commit(
 
     # Resolve role by key and persist
     r = _resolve_role(db, body.role)
-    u.role_id = r.id
+    u.role = r.key  # Direct role string instead of FK
 
     # Optional: persist selected plan tier if present (map UI keys to DB tiers)
     if getattr(body, "selected_plan", None):
@@ -441,7 +441,7 @@ def role_selection_commit(
     db.commit()
     db.refresh(u)
 
-    logger.info("[role_selection_commit] persisted role_id=%s for user=%s", r.id, u.public_id)
+    logger.info("[role_selection_commit] persisted role=%s for user=%s", r.key, u.public_id)
 
     # Call preview with a fresh payload (avoid mutating the incoming model)
     preview_body = RoleSelectionIn(
@@ -641,17 +641,17 @@ def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
                 u.phone_e164 = str(form.phone).strip()
             db.add(u)
 
-            # 2) Find or create BuyerProfile keyed by user's integer ID
+            # 2) Find or create BuyerProfile keyed by user's user_id string
             prof = (
                 db.query(BuyerProfile)
-                .filter(BuyerProfile.user_id == u.id)
+                .filter(BuyerProfile.user_id == u.user_id)
                 .one_or_none()
             )
             display_name = f"{u.first_name or ''} {u.last_name or ''}".strip()
 
             if prof is None:
                 prof = BuyerProfile(
-                    user_id=u.id,  # Integer FK to users.id
+                    user_id=u.user_id,  # STRING FK to users.user_id
                     display_name=display_name or None,
                 )
 

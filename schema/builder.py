@@ -122,8 +122,8 @@ class SalesRepOut(SalesRepBase):
 # ------------------------------------------------------------
 class BuilderProfileOut(BuilderProfileBase):
     id: int
-    build_id: str  # e.g., "B_329_XXX_XXX_XXX_XXX"
-    user_id: int
+    builder_id: str  # builder_profiles.builder_id (e.g., BLD-1699564234-X3P8Q1)
+    user_id: str  # FK to users.user_id (string, e.g., USR-xxx)
 
     # Timestamps
     created_at: Optional[str] = None

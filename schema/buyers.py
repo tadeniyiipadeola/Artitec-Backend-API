@@ -231,8 +231,9 @@ class BuyerProfileIn(BaseModel):
 
 class BuyerProfileOut(BaseModel):
     # Primary fields
-    id: int                      # buyer_profiles.id
-    user_id: str                 # FK to users.public_id (string)
+    id: int                      # buyer_profiles.id (internal integer for backward compatibility)
+    buyer_id: str                # buyer_profiles.buyer_id (e.g., BYR-1699564234-A7K9M2)
+    user_id: str                 # FK to users.user_id (string, e.g., USR-xxx)
 
     # Identity / display
     display_name: Optional[str] = None
@@ -242,6 +243,9 @@ class BuyerProfileOut(BaseModel):
     bio: Optional[str] = None
     location: Optional[str] = None
     website_url: Optional[str] = None
+
+    # Social engagement stats
+    followers_count: int = 0     # Number of users following this buyer
 
     # Contact - Canonical fields
     email: str                   # From buyer_profiles (or users as fallback)

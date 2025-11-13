@@ -111,7 +111,7 @@ class PropertyOut(PropertyBase):
 class LinkedBuilderOut(BaseModel):
     id: int
     name: Optional[str] = None
-    public_id: Optional[str] = None
+    builder_id: Optional[str] = None  # builder_profiles.builder_id (e.g., BLD-xxx)
 
     class Config:
         orm_mode = True
@@ -120,7 +120,7 @@ class LinkedBuilderOut(BaseModel):
 class LinkedCommunityOut(BaseModel):
     id: int
     name: Optional[str] = None
-    public_id: Optional[str] = None
+    community_id: Optional[str] = None  # communities.community_id (e.g., CMY-xxx)
 
     class Config:
         orm_mode = True

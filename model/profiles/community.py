@@ -21,7 +21,11 @@ class Community(Base):
     __tablename__ = "communities"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    public_id = Column(String(64), unique=True, nullable=False)  # mirrors Swift's `id` string (UUID)
+    community_id = Column(String(64), unique=True, nullable=False)  # mirrors Swift's `id` string (CMY-xxx)
+
+    # Owner/Creator of community (FK to users.user_id string ID)
+    user_id = Column(String(50), ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True, index=True)
+
     name = Column(String(255), nullable=False)
     city = Column(String(255))
     state = Column(String(64))
@@ -55,6 +59,10 @@ class Community(Base):
     updated_at = Column(
         TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
     )
+
+    # Relationships
+    # Owner/creator user
+    owner = relationship("Users", foreign_keys=[user_id], lazy="joined")
 
     # Relationships (1-to-many)
     amenities = relationship("CommunityAmenity", cascade="all, delete-orphan")

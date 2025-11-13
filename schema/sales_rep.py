@@ -33,6 +33,8 @@ class SalesRepUpdate(BaseModel):
 
 class SalesRepOut(SalesRepBase):
     id: int
+    sales_rep_id: str  # sales_reps.sales_rep_id (e.g., SLS-1699564234-P7Q8R9)
+    user_id: Optional[str] = None  # FK to users.user_id (string, e.g., USR-xxx)
     created_at: datetime
     updated_at: datetime
 

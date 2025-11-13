@@ -23,13 +23,15 @@ class CommunityAdminProfile(Base):
     """
     __tablename__ = "community_admin_profiles"
 
-    # Primary key for community admin profile
+    # Primary key for community admin profile (internal DB ID)
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    # Community Admin ID for API (e.g., ADM-1699564234-M2K9L3)
+    community_admin_id = Column(String(50), unique=True, nullable=False, index=True)
 
-    # One-to-one with users.id (unique)
+    # One-to-one with users.user_id (unique) - FK to users table (string FK)
     user_id = Column(
-        MyBIGINT(unsigned=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        String(50),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
         index=True

@@ -42,10 +42,12 @@ TourStatusEnum = SAEnum(
 class BuyerProfile(Base):
     __tablename__ = "buyer_profiles"
 
-    # Primary key for buyer profile (used as buyer_profile_id in API)
+    # Primary key for buyer profile (internal DB ID)
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # One-to-one with users.id (unique) - Changed to INT to match users.id
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    # Buyer ID for API (e.g., BYR-1699564234-A7K9M2)
+    buyer_id = Column(String(50), unique=True, nullable=False, index=True)
+    # One-to-one with users.user_id (unique) - FK to users table (string FK)
+    user_id = Column(String(50), ForeignKey("users.user_id", ondelete="CASCADE"), unique=True, nullable=False)
 
     # Identity / display
     display_name = Column(String(255), nullable=True)
@@ -53,6 +55,9 @@ class BuyerProfile(Base):
     bio = Column(Text, nullable=True)
     location = Column(String(255), nullable=True)
     website_url = Column(String(512), nullable=True)
+
+    # Social engagement stats
+    followers_count = Column(Integer, nullable=False, server_default="0")  # Denormalized count of followers
 
     # Legal name (often required up-front during onboarding)
     first_name = Column(String(120), nullable=True)

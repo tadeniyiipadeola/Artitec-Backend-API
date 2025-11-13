@@ -48,8 +48,8 @@ router = APIRouter()
 # ------------------------------ helpers -------------------------------------
 
 def _ensure_user(db: Session, user_id: str) -> Users:
-    """Resolve public_id (string) to Users model instance"""
-    user = db.query(Users).filter(Users.public_id == user_id).first()
+    """Resolve user_id (string) to Users model instance"""
+    user = db.query(Users).filter(Users.user_id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -121,7 +121,7 @@ def get_builder_profile(
     current_user=Depends(get_current_user_optional),
 ):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     includes = _parse_include(include)
     query = db.query(BuilderModel)
@@ -142,7 +142,7 @@ def create_builder_profile(
     payload: BuilderProfileCreate,
 ):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     # Check if builder profile already exists for this user
     existing = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
@@ -171,7 +171,7 @@ def update_builder_profile(
     payload: BuilderProfileUpdate,
 ):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     obj = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
     if not obj:
@@ -198,7 +198,7 @@ def delete_builder_profile(
     user_id: str
 ):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     obj = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
     if not obj:
@@ -217,9 +217,9 @@ def list_builder_sales_reps(
     db: Session = Depends(get_db),
     user_id: str,
 ):
-    """List all sales reps for a specific builder (by builder's user public_id)"""
+    """List all sales reps for a specific builder (by builder's user user_id)"""
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     # Get builder profile
     builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
@@ -245,9 +245,9 @@ def create_builder_sales_rep(
     user_id: str,
     payload: SalesRepCreate,
 ):
-    """Create a sales rep for a specific builder (by builder's user public_id)"""
+    """Create a sales rep for a specific builder (by builder's user user_id)"""
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     # Get builder profile
     builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
@@ -277,9 +277,9 @@ def update_builder_sales_rep(
     rep_id: int,
     payload: SalesRepUpdate,
 ):
-    """Update a sales rep for a specific builder (by builder's user public_id)"""
+    """Update a sales rep for a specific builder (by builder's user user_id)"""
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     # Get builder profile
     builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
@@ -317,9 +317,9 @@ def delete_builder_sales_rep(
     user_id: str,
     rep_id: int,
 ):
-    """Delete a sales rep for a specific builder (by builder's user public_id)"""
+    """Delete a sales rep for a specific builder (by builder's user user_id)"""
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
 
     # Get builder profile
     builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()

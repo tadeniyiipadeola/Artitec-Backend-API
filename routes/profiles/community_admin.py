@@ -34,7 +34,7 @@ def _get_profile_or_404(db: Session, profile_id: int) -> CommunityAdminProfile:
     return profile
 
 
-def _get_profile_by_user_id(db: Session, user_id: int) -> Optional[CommunityAdminProfile]:
+def _get_profile_by_user_id(db: Session, user_id: str) -> Optional[CommunityAdminProfile]:
     """Get community admin profile by user_id (returns None if not found)"""
     return db.query(CommunityAdminProfile).filter(
         CommunityAdminProfile.user_id == user_id
@@ -75,9 +75,9 @@ def get_my_community_admin_profile(
     current_user: Users = Depends(get_current_user)
 ):
     """Get the current user's community admin profile"""
-    print(f"🔍 GET /community-admins/me: user_id={current_user.id}")
+    print(f"🔍 GET /community-admins/me: user_id={current_user.user_id}")
 
-    profile = _get_profile_by_user_id(db, current_user.id)
+    profile = _get_profile_by_user_id(db, current_user.user_id)
     if not profile:
         raise HTTPException(
             status_code=404,
@@ -105,7 +105,7 @@ def get_community_admin_profile(
 def get_community_admin_profile_by_user(
     *,
     db: Session = Depends(get_db),
-    user_id: int,
+    user_id: str,
     current_user=Depends(get_current_user_optional)
 ):
     """Get a community admin profile by user_id"""
@@ -126,10 +126,10 @@ def create_community_admin_profile(
     current_user: Users = Depends(get_current_user)
 ):
     """Create a new community admin profile for the current user"""
-    print(f"📝 POST /community-admins: user_id={current_user.id}, community_id={payload.community_id}")
+    print(f"📝 POST /community-admins: user_id={current_user.user_id}, community_id={payload.community_id}")
 
     # Check if profile already exists for this user
-    existing = _get_profile_by_user_id(db, current_user.id)
+    existing = _get_profile_by_user_id(db, current_user.user_id)
     if existing:
         raise HTTPException(
             status_code=400,
@@ -138,7 +138,7 @@ def create_community_admin_profile(
 
     # Create new profile with current user's ID
     profile_data = payload.model_dump()
-    profile_data["user_id"] = current_user.id  # Override user_id with current user
+    profile_data["user_id"] = current_user.user_id  # Override user_id with current user
     profile = CommunityAdminProfile(**profile_data)
     db.add(profile)
     db.commit()
@@ -182,9 +182,9 @@ def update_my_community_admin_profile(
     current_user: Users = Depends(get_current_user)
 ):
     """Update the current user's community admin profile"""
-    print(f"🔧 PATCH /community-admins/me: user_id={current_user.id}")
+    print(f"🔧 PATCH /community-admins/me: user_id={current_user.user_id}")
 
-    profile = _get_profile_by_user_id(db, current_user.id)
+    profile = _get_profile_by_user_id(db, current_user.user_id)
     if not profile:
         raise HTTPException(
             status_code=404,

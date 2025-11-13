@@ -17,51 +17,61 @@ from schema.buyers import (
     BuyerTourIn as TourIn, BuyerTourOut as TourOut,
     BuyerDocumentIn as DocumentIn, BuyerDocumentOut as DocumentOut,
 )
+from src.id_generator import generate_buyer_id
 
 router = APIRouter() 
 
 # ---------- Helpers ----------
 
-def _resolve_user_id(db: Session, user_key: str | int) -> str | int:
+def _resolve_user_id(db: Session, user_key: str | int) -> str:
     """
-    Accept either an internal numeric users.id or a public_id string.
-    Returns the internal integer users.id or raises 404 if not found.
+    Accept either a user_id string (USR-xxx) or legacy numeric string.
+    Returns the user_id (string) or raises 404 if not found.
     """
-    # If already an int, pass through
-    if isinstance(user_key, int):
-        return user_key
-    # Numeric string? allow it
+    # If it's a string starting with USR-, use it directly
+    if isinstance(user_key, str) and user_key.startswith("USR-"):
+        user = db.query(Users).filter(Users.user_id == user_key).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return user.user_id
+
+    # Numeric string or int? Try to find by internal ID for legacy support
     try:
-        return int(user_key)
+        internal_id = int(user_key)
+        user = db.query(Users).filter(Users.id == internal_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return user.user_id
     except Exception:
         pass
-    # Otherwise, treat as public_id
-    user = db.query(Users).filter(Users.public_id == str(user_key)).first()
+
+    # Otherwise, treat as user_id string
+    user = db.query(Users).filter(Users.user_id == str(user_key)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return int(user.id)
+    return user.user_id
 
 def _ensure_user(db: Session, user_key: str | int) -> Users:
     uid = _resolve_user_id(db, user_key)
-    user = db.query(Users).filter(Users.id == uid).first()
+    user = db.query(Users).filter(Users.user_id == uid).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
 
-# Resolve buyer_id (BuyerProfile.id) from a given internal users.id
-def _resolve_buyer_id(db: Session, internal_user_id: int) -> int:
+# Resolve buyer_id (BuyerProfile.id) from a given user_id string
+def _resolve_buyer_id(db: Session, user_id_str: str) -> int:
     """
-    Resolve buyer profile ID from internal user ID (integer).
+    Resolve buyer profile ID from user_id string.
     Args:
         db: Database session
-        internal_user_id: users.id (INTEGER, not string public_id)
+        user_id_str: users.user_id (STRING, e.g., USR-xxx)
     Returns:
         BuyerProfile.id (integer)
     """
-    print(f"🔍 _resolve_buyer_id: Looking for user_id={internal_user_id} (type={type(internal_user_id)})")
-    prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == internal_user_id).first()
+    print(f"🔍 _resolve_buyer_id: Looking for user_id={user_id_str} (type={type(user_id_str)})")
+    prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == user_id_str).first()
     if not prof:
-        print(f"❌ _resolve_buyer_id: No buyer profile found for user_id={internal_user_id}")
+        print(f"❌ _resolve_buyer_id: No buyer profile found for user_id={user_id_str}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
     print(f"✅ _resolve_buyer_id: Found buyer profile id={prof.id}")
     return int(prof.id)
@@ -77,8 +87,12 @@ def _build_buyer_profile_out(profile: BuyerProfile, user: Users) -> dict:
 
     return {
         # Primary fields
-        "id": profile.id,
-        "user_id": user.public_id,
+        "id": profile.id,  # Return integer ID for backward compatibility with iOS app
+        "buyer_id": profile.buyer_id,  # New typed string ID (BYR-xxx)
+        "user_id": user.user_id,
+
+        # Social engagement stats
+        "followers_count": profile.followers_count if hasattr(profile, 'followers_count') else 0,
 
         # Identity / display
         "display_name": profile.display_name,
@@ -132,7 +146,7 @@ def _build_buyer_profile_out(profile: BuyerProfile, user: Users) -> dict:
 @router.get("/{user_id}", response_model=BuyerProfileOut)
 def get_buyer_profile(user_id: str, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
     prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == uid).first()
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
@@ -141,13 +155,14 @@ def get_buyer_profile(user_id: str, db: Session = Depends(get_db)):
 @router.post("/{user_id}", response_model=BuyerProfileOut, status_code=status.HTTP_201_CREATED)
 def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
     existing = db.query(BuyerProfile).filter(BuyerProfile.user_id == uid).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Buyer profile already exists")
 
     # Smart defaults: use payload values, fall back to user data where applicable
     prof = BuyerProfile(
+        buyer_id=generate_buyer_id(),  # Generate unique buyer_id (BYR-xxx)
         user_id=uid,
 
         # Identity / display
@@ -203,7 +218,7 @@ def create_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = De
 @router.patch("/{user_id}", response_model=BuyerProfileOut)
 def update_buyer_profile(user_id: str, payload: BuyerProfileIn, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
     prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == uid).first()
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
@@ -245,7 +260,7 @@ def upload_avatar(user_id: str, payload: AvatarUploadRequest, db: Session = Depe
     TODO: Configure storage backend (S3, Cloudflare R2, local filesystem, etc.)
     """
     user = _ensure_user(db, user_id)
-    uid = int(user.id)
+    uid = user.user_id
     prof = db.query(BuyerProfile).filter(BuyerProfile.user_id == uid).first()
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Buyer profile not found")
@@ -264,7 +279,7 @@ def upload_avatar(user_id: str, payload: AvatarUploadRequest, db: Session = Depe
     # Generate unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     ext = ".jpg" if "jpeg" in payload.mime_type.lower() else ".png"
-    filename = f"{user.public_id}_{timestamp}{ext}"
+    filename = f"{user.user_id}_{timestamp}{ext}"
     filepath = os.path.join(upload_dir, filename)
 
     # Save file
@@ -286,14 +301,14 @@ def upload_avatar(user_id: str, payload: AvatarUploadRequest, db: Session = Depe
 @router.get("/{user_id}/tours", response_model=List[TourOut])
 def list_tours(user_id: str, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     q = db.query(BuyerTour).filter(BuyerTour.buyer_id == buyer_id).order_by(BuyerTour.created_at.desc())
     return q.all()
 
 @router.post("/{user_id}/tours", response_model=TourOut, status_code=status.HTTP_201_CREATED)
 def create_tour(user_id: str, payload: TourIn, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     tour = BuyerTour(
         buyer_id=buyer_id,
         property_id=payload.property_id,  # if you support public_id resolution, do it here
@@ -311,7 +326,7 @@ def create_tour(user_id: str, payload: TourIn, db: Session = Depends(get_db)):
 @router.patch("/{user_id}/tours/{tour_id}", response_model=TourOut)
 def update_tour(user_id: str, tour_id: int, payload: TourIn, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     tour = db.query(BuyerTour).filter(BuyerTour.id == tour_id, BuyerTour.buyer_id == buyer_id).first()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
@@ -328,7 +343,7 @@ def update_tour(user_id: str, tour_id: int, payload: TourIn, db: Session = Depen
 @router.delete("/{user_id}/tours/{tour_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_tour(user_id: str, tour_id: int, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     tour = db.query(BuyerTour).filter(BuyerTour.id == tour_id, BuyerTour.buyer_id == buyer_id).first()
     if not tour:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tour not found")
@@ -341,14 +356,14 @@ def delete_tour(user_id: str, tour_id: int, db: Session = Depends(get_db)):
 @router.get("/{user_id}/documents", response_model=List[DocumentOut])
 def list_documents(user_id: str, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     q = db.query(BuyerDocument).filter(BuyerDocument.buyer_id == buyer_id).order_by(BuyerDocument.created_at.desc())
     return q.all()
 
 @router.post("/{user_id}/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 def create_document(user_id: str, payload: DocumentIn, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     doc = BuyerDocument(
         buyer_id=buyer_id,
         property_id=payload.property_id,
@@ -366,7 +381,7 @@ def create_document(user_id: str, payload: DocumentIn, db: Session = Depends(get
 @router.delete("/{user_id}/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(user_id: str, doc_id: int, db: Session = Depends(get_db)):
     user = _ensure_user(db, user_id)
-    buyer_id = _resolve_buyer_id(db, int(user.id))
+    buyer_id = _resolve_buyer_id(db, user.user_id)
     doc = db.query(BuyerDocument).filter(BuyerDocument.id == doc_id, BuyerDocument.buyer_id == buyer_id).first()
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")

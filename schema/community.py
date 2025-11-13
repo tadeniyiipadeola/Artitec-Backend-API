@@ -305,7 +305,8 @@ class CommunityUpdate(BaseModel):
 
 class CommunityOut(CommunityBase):
     id: int
-    public_id: str
+    community_id: str  # communities.community_id (e.g., CMY-1699564234-Z5R7N4)
+    user_id: Optional[str] = None  # FK to users.user_id (string, e.g., USR-xxx)
 
     created_at: datetime
     updated_at: datetime

@@ -6,8 +6,15 @@ from model.base import Base
 class SalesRep(Base):
     __tablename__ = "sales_reps"
 
+    # Primary key (internal DB ID)
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    # Sales Rep ID for API (e.g., SLS-1699564234-P7Q8R9)
+    sales_rep_id = Column(String(50), unique=True, nullable=False, index=True)
+    # FK to users.user_id (String) - the user account for this sales rep
+    user_id = Column(String(50), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=True, index=True)
+    # FK to builder_profiles.id (internal DB ID)
     builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False)
+    # FK to communities.id (internal DB ID)
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=True)
 
     first_name = Column(String(128), nullable=False)

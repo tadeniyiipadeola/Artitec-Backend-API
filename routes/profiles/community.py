@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from config.db import get_db
 from config.security import get_current_user_optional
+from model.user import Users
+from model.profiles.community_admin_profile import CommunityAdminProfile
 
 # --- SQLAlchemy models -------------------------------------------------------
 try:
@@ -127,6 +129,52 @@ def list_communities(
 
     rows: Sequence[CommunityModel] = query.offset(offset).limit(limit).all()
     return [CommunityOut.model_validate(r) for r in rows]
+
+
+@router.get("/for-user/{user_id}", response_model=CommunityOut)
+def get_community_for_user(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    include: Optional[str] = Query(None, description="Comma-separated includes: amenities,events,builder_cards,admins,awards,threads,phases,builders"),
+):
+    """
+    Get the community associated with a user (via CommunityAdminProfile).
+    Works with user user_id (USR-xxx) or internal user ID.
+    """
+    # Resolve user by user_id or internal ID
+    user = db.query(Users).filter(Users.user_id == user_id).first()
+    if not user:
+        # Try as integer ID for legacy support
+        try:
+            user = db.query(Users).filter(Users.id == int(user_id)).first()
+        except ValueError:
+            pass
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Find community admin profile for this user
+    admin_profile = db.query(CommunityAdminProfile).filter(
+        CommunityAdminProfile.user_id == user.user_id
+    ).first()
+
+    if not admin_profile:
+        raise HTTPException(
+            status_code=404,
+            detail="No community found for this user. User must be a community admin."
+        )
+
+    # Get the community with optional includes
+    includes = _parse_include(include)
+    query = db.query(CommunityModel)
+    query = _apply_includes(query, includes)
+    community = query.filter(CommunityModel.id == admin_profile.community_id).first()
+
+    if not community:
+        raise HTTPException(status_code=404, detail="Community not found")
+
+    return CommunityOut.model_validate(community)
 
 
 @router.get("/{community_id}", response_model=CommunityOut)

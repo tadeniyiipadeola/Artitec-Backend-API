@@ -20,13 +20,13 @@ def get_me(current_user: Users = Depends(get_current_user)):
     return current_user
 
 
-@router.get("/v1/users/{public_id}", response_model=UserOut)
-def get_user_by_public_id(public_id: str, db: Session = Depends(get_db)):
+@router.get("/v1/users/{user_id}", response_model=UserOut)
+def get_user_by_user_id(user_id: str, db: Session = Depends(get_db)):
     """
-    Returns a user by their public_id.
+    Returns a user by their user_id.
     Accessible without authentication (depending on your policy).
     """
-    user = db.scalar(select(Users).where(Users.public_id == public_id))
+    user = db.scalar(select(Users).where(Users.user_id == user_id))
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -47,25 +47,25 @@ def update_my_role(
         raise HTTPException(status_code=404, detail="Role not found.")
 
     # Prevent non-admins from self-promoting to admin
-    if role_row.key == "admin" and getattr(me.role, "key", None) != "admin":
+    if role_row.key == "admin" and me.role != "admin":
         raise HTTPException(status_code=403, detail="You cannot assign yourself an admin role.")
 
-    me.role_id = role_row.id
+    me.role = role_row.key  # Direct role string instead of FK
     db.add(me)
     db.commit()
     db.refresh(me)
     return me
 
 
-@router.patch("/{public_id}/role", response_model=UserOut, status_code=status.HTTP_200_OK)
-def update_role_by_public_id(
-    public_id: str,
+@router.patch("/{user_id}/role", response_model=UserOut, status_code=status.HTTP_200_OK)
+def update_role_by_user_id(
+    user_id: str,
     payload: UserRoleUpdate,
     db: Session = Depends(get_db),
     caller: Users = Depends(get_current_user),
     _authz: bool = Depends(require_admin_or_self),
 ):
-    user = db.scalar(select(Users).where(Users.public_id == public_id))
+    user = db.scalar(select(Users).where(Users.user_id == user_id))
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
@@ -75,10 +75,10 @@ def update_role_by_public_id(
 
     # Only admins may assign the admin role
     if role_row.key == "admin":
-        if getattr(getattr(caller, "role", None), "key", None) != "admin":
+        if caller.role != "admin":
             raise HTTPException(status_code=403, detail="Only admins can assign the admin role.")
 
-    user.role_id = role_row.id
+    user.role = role_row.key  # Direct role string instead of FK
     db.add(user)
     db.commit()
     db.refresh(user)

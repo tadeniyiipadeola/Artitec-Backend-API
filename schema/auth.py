@@ -59,7 +59,7 @@ class OrgLookupOut(BaseModel):
 
 
 class UserOutLite(BaseModel):
-    public_id: str
+    user_id: str  # users.user_id (e.g., USR-xxx)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: EmailStr
@@ -69,7 +69,7 @@ class UserOutLite(BaseModel):
 # --- Role-scoped form payloads ---
 class BuilderForm(BaseModel):
     role: Literal["builder"] = "builder"
-    public_id: str
+    user_id: str = Field(..., validation_alias=AliasChoices("user_id", "public_id", "userPublicId"))
     company_name: str
     enterprise_number: Optional[str] = None
     company_address: Optional[str] = None
@@ -77,9 +77,11 @@ class BuilderForm(BaseModel):
     years_in_business: Optional[int] = None
     website_url: Optional[str] = None
 
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
 class CommunityForm(BaseModel):
     role: Literal["community"] = "community"
-    public_id: str
+    user_id: str = Field(..., validation_alias=AliasChoices("user_id", "public_id", "userPublicId"))
     community_name: str
     community_address: Optional[str] = None
     city: str
@@ -87,9 +89,11 @@ class CommunityForm(BaseModel):
     stage: Optional[str] = None
     enterprise_number: Optional[str] = None
 
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
 class CommunityAdminForm(BaseModel):
     role: Literal["community_admin"] = "community_admin"
-    public_id: str
+    user_id: str = Field(..., validation_alias=AliasChoices("user_id", "public_id", "userPublicId"))
     first_name: str
     last_name: str
     email: Optional[EmailStr] = None
@@ -98,9 +102,11 @@ class CommunityAdminForm(BaseModel):
     community_link: str
     community_address: Optional[str] = None
 
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
 class SalesRepForm(BaseModel):
     role: Literal["salesrep"] = "salesrep"
-    public_id: str
+    user_id: str = Field(..., validation_alias=AliasChoices("user_id", "public_id", "userPublicId"))
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     address: Optional[str] = None
@@ -113,6 +119,8 @@ class SalesRepForm(BaseModel):
     brokerage: Optional[str] = None
     license_id: Optional[str] = None
     years_at_company: Optional[int] = None
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 class BuyerForm(BaseModel):
     role: Literal["buyer"] = "buyer"

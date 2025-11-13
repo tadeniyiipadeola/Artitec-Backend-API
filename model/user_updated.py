@@ -12,7 +12,7 @@ MIGRATION: Run f2g3h4i5j6k7_replace_role_id_with_role_key.py first
 """
 
 from sqlalchemy import (
-    Column, String, BigInteger, SmallInteger, Boolean, CHAR,
+    Column, String, BigInteger, Boolean, CHAR,
     TIMESTAMP, ForeignKey, Index, DateTime as SADateTime,
     Enum as SAEnum
 )
@@ -33,7 +33,7 @@ class Users(Base):
     __tablename__ = "users"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    public_id: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     first_name = Column(String(120), nullable=False)
     last_name = Column(String(120), nullable=False)

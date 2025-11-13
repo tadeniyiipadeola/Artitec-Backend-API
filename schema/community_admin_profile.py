@@ -41,7 +41,7 @@ class CommunityAdminProfileBase(BaseModel):
 # -------------------- Create Schema --------------------
 class CommunityAdminProfileCreate(CommunityAdminProfileBase):
     """Create a new community admin profile - requires user_id and community_id"""
-    user_id: int
+    user_id: str  # FK to users.user_id (string, e.g., USR-xxx)
     community_id: int
 
 
@@ -69,7 +69,8 @@ class CommunityAdminProfileUpdate(BaseModel):
 class CommunityAdminProfileOut(CommunityAdminProfileBase):
     """Response model for community admin profile with all fields"""
     id: int
-    user_id: int
+    community_admin_id: str  # community_admin_profiles.community_admin_id (e.g., CAP-1699564234-X7Y8Z9)
+    user_id: str  # FK to users.user_id (string, e.g., USR-xxx)
     community_id: int
 
     created_at: datetime
