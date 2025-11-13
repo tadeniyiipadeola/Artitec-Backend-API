@@ -70,6 +70,7 @@ class Users(Base):
     builder_profile = relationship("BuilderProfile", back_populates="user", uselist=False)
     sessions = relationship("SessionToken", backref="user", passive_deletes=True)
     email_verifications = relationship("EmailVerification", backref="user", passive_deletes=True)
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user", passive_deletes=True)
 
     # Helper property to get role display name from reference table
     @property

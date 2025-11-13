@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from routes.auth import router as auth_router
 from routes.user import router as user_router
+from routes.password_reset import router as password_reset_router
 from routes.profiles import buyers, builder, community, sales_rep, community_admin
 from routes.property import property
 from routes.admin_helpers import router as admin_router
@@ -81,6 +82,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/v1/auth", tags=["Authentication"])
+app.include_router(password_reset_router, prefix="/v1/auth", tags=["Authentication"])
 app.include_router(user_router, tags=["Users"])
 app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
