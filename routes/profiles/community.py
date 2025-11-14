@@ -177,6 +177,26 @@ def get_community_for_user(
     return CommunityOut.model_validate(community)
 
 
+@router.get("/public/{public_id}", response_model=CommunityOut)
+def get_community_by_public_id(
+    *,
+    db: Session = Depends(get_db),
+    public_id: str,
+    include: Optional[str] = Query(None),
+    current_user=Depends(get_current_user_optional),
+):
+    """Get community by public community_id (e.g., CMY-xxx)"""
+    includes = _parse_include(include)
+    query = db.query(CommunityModel)
+    query = _apply_includes(query, includes)
+
+    community = query.filter(CommunityModel.community_id == public_id).first()
+    if not community:
+        raise HTTPException(status_code=404, detail="Community not found")
+
+    return CommunityOut.model_validate(community)
+
+
 @router.get("/{community_id}", response_model=CommunityOut)
 def get_community(
     *,

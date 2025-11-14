@@ -248,6 +248,140 @@ class EmailService:
             html_body=html_body
         )
 
+    def send_email_verification(
+        self,
+        to_email: str,
+        verification_token: str,
+        user_name: Optional[str] = None
+    ) -> bool:
+        """
+        Send email verification link.
+
+        Args:
+            to_email: User's email address
+            verification_token: Email verification token
+            user_name: User's name (optional, for personalization)
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        verify_url = f"{self.frontend_url}/verify-email?token={verification_token}"
+
+        greeting = f"Hi {user_name}," if user_name else "Hello,"
+
+        html_body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }}
+                .header {{
+                    background: linear-gradient(135deg, #D4AF37 0%, #C5A028 100%);
+                    color: white;
+                    padding: 30px;
+                    text-align: center;
+                    border-radius: 8px 8px 0 0;
+                }}
+                .content {{
+                    background: #ffffff;
+                    padding: 30px;
+                    border: 1px solid #e1e1e1;
+                    border-top: none;
+                }}
+                .button {{
+                    display: inline-block;
+                    padding: 14px 28px;
+                    background: linear-gradient(135deg, #D4AF37 0%, #C5A028 100%);
+                    color: white !important;
+                    text-decoration: none;
+                    border-radius: 6px;
+                    font-weight: 600;
+                    margin: 20px 0;
+                }}
+                .button:hover {{
+                    background: linear-gradient(135deg, #C5A028 0%, #B69020 100%);
+                }}
+                .footer {{
+                    background: #f8f9fa;
+                    padding: 20px;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #666;
+                    border-radius: 0 0 8px 8px;
+                    border: 1px solid #e1e1e1;
+                    border-top: none;
+                }}
+                .warning {{
+                    background: #d1ecf1;
+                    border-left: 4px solid #17a2b8;
+                    padding: 12px;
+                    margin: 20px 0;
+                }}
+                .code {{
+                    background: #f5f5f5;
+                    padding: 12px;
+                    border-radius: 4px;
+                    font-family: 'Courier New', monospace;
+                    word-break: break-all;
+                    margin: 10px 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1 style="margin: 0;">✨ Welcome to Artitec!</h1>
+            </div>
+            <div class="content">
+                <p>{greeting}</p>
+                <p>Thank you for creating an Artitec account! We're excited to have you join our modern real estate platform.</p>
+                <p>To get started, please verify your email address by clicking the button below:</p>
+
+                <div style="text-align: center;">
+                    <a href="{verify_url}" class="button">Verify Email Address</a>
+                </div>
+
+                <p>Or copy and paste this link into your browser:</p>
+                <div class="code">{verify_url}</div>
+
+                <div class="warning">
+                    <strong>⏰ This link will expire in 48 hours.</strong>
+                </div>
+
+                <p><strong>Why verify?</strong></p>
+                <ul>
+                    <li>Secure your account</li>
+                    <li>Enable password recovery</li>
+                    <li>Receive important account notifications</li>
+                    <li>Access all platform features</li>
+                </ul>
+
+                <p><strong>Didn't sign up?</strong><br>
+                If you didn't create an Artitec account, you can safely ignore this email.</p>
+            </div>
+            <div class="footer">
+                <p><strong>Artitec</strong> - Modern Real Estate Platform</p>
+                <p>This is an automated email. Please do not reply.</p>
+                <p>© {datetime.utcnow().year} Artitec Technology. All rights reserved.</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        return self.send_email(
+            to_email=to_email,
+            subject="Verify Your Artitec Email Address",
+            html_body=html_body
+        )
+
     def send_password_changed_notification(
         self,
         to_email: str,

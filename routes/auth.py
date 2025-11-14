@@ -73,7 +73,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
     u = Users(
-        public_id=gen_public_id(),
+        user_id=gen_public_id(),
         email=body.email,
         first_name=body.first_name,
         last_name=body.last_name,
@@ -82,7 +82,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     )
     db.add(u)
     db.flush()
-    logger.info("User created with id=%s, public_id=%s", u.id, u.public_id)
+    logger.info("User created with id=%s, user_id=%s", u.id, u.user_id)
 
     creds = UserCredential(
         user_id=u.id,
@@ -108,10 +108,20 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     )
     db.add(sess)
     db.commit()
+
+    # Send verification email after commit (so token is saved)
+    from src.email_service import get_email_service
+    email_service = get_email_service()
+    user_name = f"{u.first_name} {u.last_name}"
+    email_service.send_email_verification(
+        to_email=u.email,
+        verification_token=ver.token,
+        user_name=user_name
+    )
     logger.info("Registration committed for user id=%s", u.id)
     db.refresh(u)
 
-    access = make_access_token(u.public_id, u.id, u.email)
+    access = make_access_token(u.user_id, u.id, u.email)
     logger.info("Registration successful for user email=%s", body.email)
     # Build role dict for response
     if u.role:
@@ -121,7 +131,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
 
     return AuthOut(
         user=UserOut(
-            public_id=u.public_id,
+            public_id=u.user_id,
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
@@ -179,7 +189,7 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 
     return AuthOut(
         user=UserOut(
-            public_id=u.public_id,
+            public_id=u.user_id,
             first_name=u.first_name,
             last_name=u.last_name,
             email=u.email,
@@ -191,7 +201,7 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
             created_at=u.created_at,
             updated_at=u.updated_at
         ),
-        access_token=make_access_token(u.public_id, u.id, u.email),
+        access_token=make_access_token(u.user_id, u.id, u.email),
         refresh_token=refresh,
         requires_email_verification=not u.is_email_verified
     )
@@ -350,15 +360,15 @@ def role_selection_preview(body: RoleSelectionIn, db: Session = Depends(get_db))
             raise HTTPException(status_code=422, detail="Unknown role.")
 
         # Load the user for the response
-        u = db.query(Users).filter(Users.public_id == body.user_public_id).one_or_none()
+        u = db.query(Users).filter(Users.user_id == body.user_public_id).one_or_none()
         if not u:
             raise HTTPException(status_code=404, detail="User not found")
 
         logger.info("[role_selection_preview] out: user=%s role=%s next_step=%s requires_payment=%s",
-                    u.public_id, body.role, next_step, requires_payment)
+                    u.user_id, body.role, next_step, requires_payment)
         return RoleSelectionOut(
             user=UserOut(
-                public_id=u.public_id,
+                public_id=u.user_id,
                 first_name=u.first_name,
                 last_name=u.last_name,
                 email=u.email,
@@ -400,16 +410,16 @@ def role_selection_commit(
     )
 
     # Determine target user via public_id (if provided) or authenticated user
-    requested_pub = body.user_public_id or current_user.public_id
+    requested_pub = body.user_public_id or current_user.user_id
 
     # Security: if client supplied a public_id, it must match the authenticated user
-    if body.user_public_id is not None and requested_pub != current_user.public_id:
+    if body.user_public_id is not None and requested_pub != current_user.user_id:
         raise HTTPException(status_code=403, detail="Forbidden: user mismatch")
 
     # Load active user
     u = (
         db.query(Users)
-        .filter(Users.public_id == requested_pub, Users.status == "active")
+        .filter(Users.user_id == requested_pub, Users.status == "active")
         .one_or_none()
     )
     if not u:
@@ -441,11 +451,11 @@ def role_selection_commit(
     db.commit()
     db.refresh(u)
 
-    logger.info("[role_selection_commit] persisted role=%s for user=%s", r.key, u.public_id)
+    logger.info("[role_selection_commit] persisted role=%s for user=%s", r.key, u.user_id)
 
     # Call preview with a fresh payload (avoid mutating the incoming model)
     preview_body = RoleSelectionIn(
-        user_public_id=u.public_id,
+        user_public_id=u.user_id,
         role=body.role,
         org_id=body.org_id,
         selected_plan=body.selected_plan,
@@ -609,7 +619,7 @@ def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
         logger.debug("[role_form_commit] in: user=%s role=%s", uid, getattr(form, 'role', None))
         if not uid:
             raise HTTPException(status_code=422, detail={"missing": {"user_public_id": "User public_id is required"}})
-        u = db.query(Users).filter(Users.public_id == uid).one_or_none()
+        u = db.query(Users).filter(Users.user_id == uid).one_or_none()
         if not u:
             logger.warning("[role_form_commit] user not found: %s", form.user_public_id)
             raise HTTPException(status_code=404, detail="User not found")
@@ -776,7 +786,7 @@ def role_form_commit(body: dict = Body(...), db: Session = Depends(get_db)):
             next_step = "await_verification"
         db.commit()
         logger.info("[role_form_commit] out: user=%s role=%s next_step=%s messages=%d",
-                    u.public_id, preview.role, next_step, len(messages))
+                    u.user_id, preview.role, next_step, len(messages))
         return FormCommitOut(role=preview.role, saved=True, messages=messages, next_step=next_step)
     except HTTPException:
         raise

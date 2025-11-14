@@ -5,9 +5,9 @@ SQLAlchemy model for password reset tokens.
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 
-from config.db import Base
-from model.custom_types import MyBIGINT
+from model.base import Base
 
 
 class PasswordResetToken(Base):

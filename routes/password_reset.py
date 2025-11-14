@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from config.db import get_db
-from config.security import hash_password
+from src.utils import hash_password
 from model.user import Users, UserCredential
 from model.password_reset import PasswordResetToken
 from schema.password_reset import (
