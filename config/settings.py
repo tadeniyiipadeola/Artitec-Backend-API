@@ -1,5 +1,9 @@
 # config/settings.py
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Database configuration
 DB_URL = os.getenv("DB_URL", "mysql+pymysql://user:pass@127.0.0.1:3306/artitec")

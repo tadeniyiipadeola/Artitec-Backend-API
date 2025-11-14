@@ -92,7 +92,7 @@ def get_current_user(db: Session = Depends(get_db), creds: HTTPAuthorizationCred
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.scalar(select(Users).where(Users.public_id == user_id))
+    user = db.scalar(select(Users).where(Users.user_id == user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -111,7 +111,7 @@ def get_current_user_optional(
     if not user_id:
         return None
 
-    return db.scalar(select(Users).where(Users.public_id == user_id))
+    return db.scalar(select(Users).where(Users.user_id == user_id))
 
 
 # ---------------------------------------------------------------------------

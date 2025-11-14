@@ -6,3 +6,4 @@ def load_all_models():
     import model.profiles.community_admin_profile        # noqa: F401
     import model.profiles.sales_rep                      # noqa: F401
     import model.followers                               # noqa: F401
+    import model.media                                   # noqa: F401
