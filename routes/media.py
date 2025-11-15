@@ -33,6 +33,105 @@ router = APIRouter(prefix="/v1/media", tags=["Media"])
 storage = get_storage_backend()
 
 
+# Helper function to get entity profile ID
+def get_entity_profile_id(db: Session, entity_type: str, entity_id: int) -> Optional[str]:
+    """
+    Get the profile ID (community_id, builder_id, etc.) for an entity.
+
+    Args:
+        db: Database session
+        entity_type: Type of entity (community, builder, user, etc.)
+        entity_id: Database integer ID of the entity
+
+    Returns:
+        The profile ID string (e.g., "CMY-...", "BLD-...") or None
+    """
+    try:
+        if entity_type == "community":
+            from model.profiles.community import Community
+            community = db.query(Community).filter(Community.id == entity_id).first()
+            return community.community_id if community else None
+
+        elif entity_type == "builder":
+            from model.profiles.builder import BuilderProfile
+            builder = db.query(BuilderProfile).filter(BuilderProfile.id == entity_id).first()
+            return builder.builder_id if builder else None
+
+        elif entity_type == "user":
+            from model.user import Users
+            user = db.query(Users).filter(Users.id == entity_id).first()
+            return user.user_id if user else None
+
+        # Add more entity types as needed
+        else:
+            return None
+    except Exception as e:
+        logger.warning(f"Error fetching profile ID for {entity_type}/{entity_id}: {e}")
+        return None
+
+
+# Helper to convert relative URL to full URL
+def make_full_url(url: Optional[str], base_url: str) -> Optional[str]:
+    """
+    Convert relative URL to full URL for old local storage files.
+
+    Args:
+        url: The URL from database (could be relative or full)
+        base_url: The base URL from environment (e.g., http://localhost:8000)
+
+    Returns:
+        Full URL or None
+    """
+    if not url:
+        return None
+
+    # If already a full URL (starts with http:// or https://), return as-is
+    if url.startswith(('http://', 'https://')):
+        return url
+
+    # For old relative URLs like "images/filename.jpg", prepend base URL and /uploads/
+    # This makes them accessible via the static files mount
+    return f"{base_url}/uploads/{url}"
+
+
+# Helper to convert Media to MediaOut with profile ID
+def media_to_out(db: Session, media: Media) -> MediaOut:
+    """Convert Media ORM object to MediaOut schema with entity_profile_id populated"""
+    # Get base URL from environment for converting old relative URLs
+    import os
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+
+    media_dict = {
+        "id": media.id,
+        "public_id": media.public_id,
+        "filename": media.filename,
+        "original_filename": media.original_filename,
+        "media_type": media.media_type,
+        "content_type": media.content_type,
+        "file_size": media.file_size,
+        "width": media.width,
+        "height": media.height,
+        "duration": media.duration,
+        "original_url": make_full_url(media.original_url, base_url),
+        "thumbnail_url": make_full_url(media.thumbnail_url, base_url),
+        "medium_url": make_full_url(media.medium_url, base_url),
+        "large_url": make_full_url(media.large_url, base_url),
+        "video_processed_url": make_full_url(media.video_processed_url, base_url),
+        "entity_type": media.entity_type,
+        "entity_id": media.entity_id,
+        "entity_field": media.entity_field,
+        "entity_profile_id": get_entity_profile_id(db, media.entity_type, media.entity_id),
+        "alt_text": media.alt_text,
+        "caption": media.caption,
+        "sort_order": media.sort_order,
+        "uploaded_by": media.uploaded_by,
+        "is_public": media.is_public,
+        "created_at": media.created_at,
+        "updated_at": media.updated_at,
+    }
+    return MediaOut(**media_dict)
+
+
 # Helper function to generate unique filename
 def generate_filename(original_filename: str) -> str:
     """Generate unique filename preserving extension"""
@@ -87,6 +186,10 @@ async def upload_media(
         unique_filename = generate_filename(file.filename)
         base_name = Path(unique_filename).stem
 
+        # Get profile ID for organized storage
+        profile_id = get_entity_profile_id(db, entity_type.value, entity_id)
+        entity_field_value = entity_field.value if entity_field else None
+
         # Initialize URLs
         original_url = None
         thumbnail_url = None
@@ -106,11 +209,13 @@ async def upload_media(
             # Process image (generate all sizes)
             processed = ImageProcessor.process_image(io.BytesIO(file_data), base_name)
 
-            # Upload original
+            # Upload original with organized path
             storage_path, original_url = await storage.save(
                 processed['original'],
                 unique_filename,
-                content_type
+                content_type,
+                profile_id=profile_id,
+                entity_field=entity_field_value
             )
 
             # Upload thumbnail
@@ -119,7 +224,9 @@ async def upload_media(
                 _, thumbnail_url = await storage.save(
                     processed['thumbnail'],
                     thumb_filename,
-                    "image/jpeg"
+                    "image/jpeg",
+                    profile_id=profile_id,
+                    entity_field=entity_field_value
                 )
 
             # Upload medium
@@ -128,7 +235,9 @@ async def upload_media(
                 _, medium_url = await storage.save(
                     processed['medium'],
                     medium_filename,
-                    "image/jpeg"
+                    "image/jpeg",
+                    profile_id=profile_id,
+                    entity_field=entity_field_value
                 )
 
             # Upload large
@@ -137,7 +246,9 @@ async def upload_media(
                 _, large_url = await storage.save(
                     processed['large'],
                     large_filename,
-                    "image/jpeg"
+                    "image/jpeg",
+                    profile_id=profile_id,
+                    entity_field=entity_field_value
                 )
 
         elif is_video:
@@ -156,12 +267,14 @@ async def upload_media(
                 height = metadata.get('height')
                 duration = metadata.get('duration')
 
-                # Upload original video
+                # Upload original video with organized path
                 import io
                 storage_path, original_url = await storage.save(
                     io.BytesIO(file_data),
                     unique_filename,
-                    content_type
+                    content_type,
+                    profile_id=profile_id,
+                    entity_field=entity_field_value
                 )
 
                 # Generate video thumbnail
@@ -173,7 +286,9 @@ async def upload_media(
                         _, thumbnail_url = await storage.save(
                             thumb_file,
                             thumb_filename,
-                            "image/jpeg"
+                            "image/jpeg",
+                            profile_id=profile_id,
+                            entity_field=entity_field_value
                         )
                     os.remove(temp_thumb_path)
 
@@ -218,7 +333,7 @@ async def upload_media(
         logger.info(f"✅ Media uploaded successfully: id={media.id}, public_id={media.public_id}")
 
         return MediaUploadResponse(
-            media=MediaOut.from_orm(media),
+            media=media_to_out(db, media),
             message="Media uploaded successfully"
         )
 
@@ -252,7 +367,7 @@ def list_media_for_entity(
     media_items = query.order_by(Media.sort_order, Media.created_at.desc()).all()
 
     return MediaListOut(
-        items=[MediaOut.from_orm(m) for m in media_items],
+        items=[media_to_out(db, m) for m in media_items],
         total=len(media_items)
     )
 
@@ -268,7 +383,7 @@ def get_media(
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    return MediaOut.from_orm(media)
+    return media_to_out(db, media)
 
 
 @router.get("/public/{public_id}", response_model=MediaOut)
@@ -282,7 +397,7 @@ def get_media_by_public_id(
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    return MediaOut.from_orm(media)
+    return media_to_out(db, media)
 
 
 @router.delete("/{media_id}", response_model=MediaDeleteResponse)
@@ -328,6 +443,165 @@ async def delete_media(
         logger.error(f"Error deleting media: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error deleting media: {str(e)}")
+
+
+# Access control helper
+def check_media_access(media: Media, current_user: dict, db: Session) -> bool:
+    """
+    Check if user can access/modify this media.
+
+    Returns:
+        True if user has access, False otherwise
+    """
+    # Owner can always access
+    if media.uploaded_by == current_user['public_id']:
+        return True
+
+    # Check if user is admin of the entity
+    if media.entity_type == "community":
+        from model.profiles.community import Community
+        community = db.query(Community).filter(Community.id == media.entity_id).first()
+        if community and hasattr(community, 'admin_id'):
+            return community.admin_id == current_user['public_id']
+
+    elif media.entity_type == "builder":
+        from model.profiles.builder import BuilderProfile
+        builder = db.query(BuilderProfile).filter(BuilderProfile.id == media.entity_id).first()
+        if builder and hasattr(builder, 'user_id'):
+            return builder.user_id == current_user['public_id']
+
+    # Admin users can access everything (if you have a role system)
+    if current_user.get('role') == 'admin':
+        return True
+
+    return False
+
+
+@router.post("/batch/delete")
+async def batch_delete_media(
+    media_ids: List[int],
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete multiple media items at once.
+    Only the uploader or entity admin can delete.
+    """
+    if not media_ids:
+        raise HTTPException(status_code=400, detail="No media IDs provided")
+
+    if len(media_ids) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 items per batch")
+
+    deleted = []
+    failed = []
+
+    for media_id in media_ids:
+        try:
+            media = db.query(Media).filter(Media.id == media_id).first()
+
+            if not media:
+                failed.append({"id": media_id, "error": "Media not found"})
+                continue
+
+            # Check permissions
+            if not check_media_access(media, current_user, db):
+                failed.append({"id": media_id, "error": "Not authorized"})
+                continue
+
+            # Delete from storage
+            try:
+                await storage.delete(media.storage_path)
+
+                # Delete thumbnails/variants
+                if media.thumbnail_url:
+                    thumb_path = media.storage_path.replace(
+                        Path(media.filename).name,
+                        f"{Path(media.filename).stem}_thumb.jpg"
+                    )
+                    await storage.delete(thumb_path)
+
+                if media.medium_url:
+                    medium_path = media.storage_path.replace(
+                        Path(media.filename).name,
+                        f"{Path(media.filename).stem}_medium.jpg"
+                    )
+                    await storage.delete(medium_path)
+
+                if media.large_url:
+                    large_path = media.storage_path.replace(
+                        Path(media.filename).name,
+                        f"{Path(media.filename).stem}_large.jpg"
+                    )
+                    await storage.delete(large_path)
+            except Exception as storage_error:
+                logger.warning(f"Storage deletion warning for {media_id}: {storage_error}")
+
+            # Delete from database
+            db.delete(media)
+            deleted.append(media_id)
+
+            logger.info(f"🗑️  Batch deleted media: id={media_id}, public_id={media.public_id}")
+
+        except Exception as e:
+            logger.error(f"Error deleting media {media_id}: {e}")
+            failed.append({"id": media_id, "error": str(e)})
+
+    # Commit all deletions
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error committing deletions: {str(e)}")
+
+    return {
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "failed": failed,
+        "failed_count": len(failed),
+        "message": f"Successfully deleted {len(deleted)} items"
+    }
+
+
+@router.get("/analytics/storage")
+async def get_storage_analytics(
+    entity_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get storage usage statistics"""
+    from sqlalchemy import func
+
+    query = db.query(
+        Media.entity_type,
+        Media.media_type,
+        func.count(Media.id).label('count'),
+        func.sum(Media.file_size).label('total_size')
+    )
+
+    if entity_type:
+        query = query.filter(Media.entity_type == entity_type)
+
+    stats = query.group_by(Media.entity_type, Media.media_type).all()
+
+    total_files = sum(stat.count for stat in stats)
+    total_size = sum(stat.total_size or 0 for stat in stats)
+
+    return {
+        "total_files": total_files,
+        "total_size_bytes": total_size,
+        "total_size_mb": round(total_size / 1024 / 1024, 2) if total_size else 0,
+        "total_size_gb": round(total_size / 1024 / 1024 / 1024, 2) if total_size else 0,
+        "by_entity_and_type": [
+            {
+                "entity_type": stat.entity_type,
+                "media_type": stat.media_type.value,
+                "count": stat.count,
+                "total_size_mb": round((stat.total_size or 0) / 1024 / 1024, 2)
+            }
+            for stat in stats
+        ]
+    }
 
 
 # Serve uploaded files (for local development)

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from model.media import Media, MediaType
 from src.media_processing import ImageProcessor, VideoProcessor
 from src.storage import get_storage_backend
+from src.id_generator import generate_public_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,31 @@ class MediaScraper:
         self.storage = get_storage_backend()
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': self.USER_AGENT})
+
+    def _get_entity_profile_id(self, entity_type: str, entity_id: int) -> Optional[str]:
+        """
+        Get the profile ID (community_id, builder_id, user_id) for an entity.
+        This is used to organize storage by profile folders.
+        """
+        try:
+            if entity_type == "community":
+                from model.profiles.community import Community
+                community = self.db.query(Community).filter(Community.id == entity_id).first()
+                return community.community_id if community else None
+            elif entity_type == "builder":
+                from model.profiles.builder import BuilderProfile
+                builder = self.db.query(BuilderProfile).filter(BuilderProfile.id == entity_id).first()
+                return builder.builder_id if builder else None
+            elif entity_type == "user":
+                from model.user import Users
+                user = self.db.query(Users).filter(Users.id == entity_id).first()
+                return user.user_id if user else None
+            else:
+                logger.warning(f"Unknown entity_type: {entity_type}")
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching profile ID for {entity_type}/{entity_id}: {e}")
+            return None
 
     async def scrape_page(
         self,
@@ -249,6 +275,23 @@ class MediaScraper:
     ) -> Optional[Media]:
         """Download image and upload to storage"""
         try:
+            # Generate filename first for duplicate check
+            filename = self._generate_filename(url, 'jpg')
+
+            # Check if this image already exists for this entity
+            existing = self.db.query(Media).filter(
+                Media.entity_type == entity_type,
+                Media.entity_id == entity_id,
+                Media.original_filename == filename
+            ).first()
+
+            if existing:
+                logger.info(f"⏭️ Skipping duplicate image: {filename} (already exists as {existing.public_id})")
+                return existing
+
+            # Get profile ID for organized storage
+            profile_id = self._get_entity_profile_id(entity_type, entity_id)
+
             # Download image
             response = self.session.get(url, timeout=30, stream=True)
             response.raise_for_status()
@@ -259,17 +302,16 @@ class MediaScraper:
             # Read image data
             image_data = io.BytesIO(response.content)
 
-            # Generate filename
-            filename = self._generate_filename(url, 'jpg')
-
             # Process image (resize, generate thumbnails)
             processed = ImageProcessor.process_image(image_data, filename.rsplit('.', 1)[0])
 
-            # Upload original
+            # Upload original with organized path
             original_url, original_key = await self.storage.save(
                 processed['original']['file'],
                 processed['original']['filename'],
-                content_type
+                content_type,
+                profile_id=profile_id,
+                entity_field=entity_field
             )
 
             # Upload variants
@@ -281,25 +323,32 @@ class MediaScraper:
                 thumbnail_url, _ = await self.storage.save(
                     processed['thumbnail']['file'],
                     processed['thumbnail']['filename'],
-                    content_type
+                    content_type,
+                    profile_id=profile_id,
+                    entity_field=entity_field
                 )
 
             if processed['medium']:
                 medium_url, _ = await self.storage.save(
                     processed['medium']['file'],
                     processed['medium']['filename'],
-                    content_type
+                    content_type,
+                    profile_id=profile_id,
+                    entity_field=entity_field
                 )
 
             if processed['large']:
                 large_url, _ = await self.storage.save(
                     processed['large']['file'],
                     processed['large']['filename'],
-                    content_type
+                    content_type,
+                    profile_id=profile_id,
+                    entity_field=entity_field
                 )
 
             # Create media record
             media = Media(
+                public_id=generate_public_id("media"),
                 filename=processed['original']['filename'],
                 original_filename=filename,
                 media_type=MediaType.IMAGE,
@@ -307,6 +356,7 @@ class MediaScraper:
                 file_size=len(response.content),
                 width=processed['original']['width'],
                 height=processed['original']['height'],
+                storage_path=original_key,
                 original_url=original_url,
                 thumbnail_url=thumbnail_url,
                 medium_url=medium_url,
@@ -344,6 +394,23 @@ class MediaScraper:
             return await self._save_video_embed(url, entity_type, entity_id, entity_field, caption)
 
         try:
+            # Generate filename first for duplicate check
+            filename = self._generate_filename(url, 'mp4')
+
+            # Check if this video already exists for this entity
+            existing = self.db.query(Media).filter(
+                Media.entity_type == entity_type,
+                Media.entity_id == entity_id,
+                Media.original_filename == filename
+            ).first()
+
+            if existing:
+                logger.info(f"⏭️ Skipping duplicate video: {filename} (already exists as {existing.public_id})")
+                return existing
+
+            # Get profile ID for organized storage
+            profile_id = self._get_entity_profile_id(entity_type, entity_id)
+
             # Download video
             response = self.session.get(url, timeout=60, stream=True)
             response.raise_for_status()
@@ -354,14 +421,13 @@ class MediaScraper:
             # Read video data
             video_data = io.BytesIO(response.content)
 
-            # Generate filename
-            filename = self._generate_filename(url, 'mp4')
-
-            # Upload original video
+            # Upload original video with organized path
             original_url, original_key = await self.storage.save(
                 video_data,
                 filename,
-                content_type
+                content_type,
+                profile_id=profile_id,
+                entity_field=entity_field
             )
 
             # Generate thumbnail
@@ -374,7 +440,9 @@ class MediaScraper:
                 thumbnail_url, _ = await self.storage.save(
                     thumbnail_data,
                     thumb_filename,
-                    'image/jpeg'
+                    'image/jpeg',
+                    profile_id=profile_id,
+                    entity_field=entity_field
                 )
 
             # Get video metadata
@@ -383,6 +451,7 @@ class MediaScraper:
 
             # Create media record
             media = Media(
+                public_id=generate_public_id("media"),
                 filename=filename,
                 original_filename=filename,
                 media_type=MediaType.VIDEO,
@@ -391,6 +460,7 @@ class MediaScraper:
                 width=metadata.get('width'),
                 height=metadata.get('height'),
                 duration=metadata.get('duration'),
+                storage_path=original_key,
                 original_url=original_url,
                 thumbnail_url=thumbnail_url,
                 entity_type=entity_type,
@@ -421,12 +491,25 @@ class MediaScraper:
         caption: Optional[str] = None
     ) -> Media:
         """Save video embed URL (YouTube, Vimeo)"""
+        # Check if this video embed already exists for this entity
+        existing = self.db.query(Media).filter(
+            Media.entity_type == entity_type,
+            Media.entity_id == entity_id,
+            Media.original_filename == url
+        ).first()
+
+        if existing:
+            logger.info(f"⏭️ Skipping duplicate video embed: {url} (already exists as {existing.public_id})")
+            return existing
+
         media = Media(
+            public_id=generate_public_id("media"),
             filename="embed_video",
             original_filename=url,
             media_type=MediaType.VIDEO,
             content_type="video/embed",
             file_size=0,
+            storage_path=url,
             original_url=url,
             entity_type=entity_type,
             entity_id=entity_id,

@@ -23,6 +23,7 @@ PREFIX_MAP = {
     "event": "EVT",
     "message": "MSG",
     "notification": "NTF",
+    "media": "MED",
 }
 
 
@@ -31,7 +32,7 @@ def generate_public_id(prefix: str) -> str:
     Generate a typed public ID with format: PREFIX-TIMESTAMP-RANDOM
 
     Args:
-        prefix: 3-letter type prefix (e.g., "USR", "BYR", "BLD")
+        prefix: 3-letter type prefix (e.g., "USR", "BYR", "BLD") or resource type name (e.g., "user", "media")
 
     Returns:
         str: Public ID in format PREFIX-TIMESTAMP-RANDOM
@@ -43,6 +44,10 @@ def generate_public_id(prefix: str) -> str:
         - 6-char alphanumeric = 36^6 = ~2 billion combinations per second
         - Collision probability is negligible in practice
     """
+    # If prefix is a resource type name, look it up in PREFIX_MAP
+    if prefix in PREFIX_MAP:
+        prefix = PREFIX_MAP[prefix]
+
     timestamp = int(time.time())
 
     # Generate 6-character random alphanumeric string (uppercase)

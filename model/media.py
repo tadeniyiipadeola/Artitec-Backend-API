@@ -11,8 +11,8 @@ import enum
 
 class MediaType(enum.Enum):
     """Media type enum"""
-    IMAGE = "image"
-    VIDEO = "video"
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"
 
 
 class Media(Base):
@@ -23,7 +23,7 @@ class Media(Base):
     __tablename__ = "media"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    public_id = Column(String(20), nullable=False, unique=True, comment="Public-facing ID")
+    public_id = Column(String(30), nullable=False, unique=True, comment="Public-facing ID")
 
     # File information
     filename = Column(String(255), nullable=False, comment="Generated unique filename")
@@ -36,6 +36,9 @@ class Media(Base):
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
     duration = Column(Integer, nullable=True, comment="Duration in seconds for videos")
+
+    # Duplicate detection
+    image_hash = Column(String(64), nullable=True, comment="Perceptual hash for duplicate detection")
 
     # Storage URLs - flexible for local filesystem or S3
     storage_path = Column(Text, nullable=False, comment="Base storage path or S3 bucket key")
@@ -56,7 +59,7 @@ class Media(Base):
     sort_order = Column(Integer, nullable=True, default=0, comment="Order within gallery")
 
     # Ownership and security
-    uploaded_by = Column(String(20), nullable=False, comment="User public_id who uploaded this")
+    uploaded_by = Column(String(30), nullable=False, comment="User public_id who uploaded this")
     is_public = Column(Boolean, nullable=False, default=True, comment="Whether publicly accessible")
 
     # Timestamps

@@ -10,8 +10,8 @@ from enum import Enum
 
 class MediaType(str, Enum):
     """Media type enum"""
-    IMAGE = "image"
-    VIDEO = "video"
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"
 
 
 class EntityType(str, Enum):
@@ -85,6 +85,7 @@ class MediaOut(BaseModel):
     entity_type: str
     entity_id: int
     entity_field: Optional[str] = None
+    entity_profile_id: Optional[str] = None  # e.g., "CMY-1763002158-W1Y12N" or "BLD-..."
 
     # Metadata
     alt_text: Optional[str] = None

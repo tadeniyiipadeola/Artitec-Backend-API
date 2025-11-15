@@ -15,13 +15,70 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def generate_organized_path(
+    profile_id: Optional[str],
+    entity_field: Optional[str],
+    filename: str
+) -> str:
+    """
+    Generate organized storage path structure:
+    {profile_id}/{entity_field}/{filename}
+
+    Examples:
+    - CMY-123/gallery/image1.jpg
+    - BLD-456/avatar/profile.jpg
+    - CMY-789/video/intro.mp4
+    """
+    parts = []
+
+    # Add profile ID if provided
+    if profile_id:
+        parts.append(profile_id)
+
+    # Add entity field folder if provided
+    if entity_field:
+        # Map entity fields to folder names
+        folder_map = {
+            'gallery': 'gallery',
+            'avatar': 'profile',
+            'cover': 'cover',
+            'video_intro': 'video',
+            'thumbnail': 'thumbnails',
+            'amenities': 'amenities'
+        }
+        folder_name = folder_map.get(entity_field, entity_field)
+        parts.append(folder_name)
+
+    # Add filename
+    parts.append(filename)
+
+    return '/'.join(parts)
+
+
 class StorageBackend(ABC):
     """Abstract base class for storage backends"""
 
     @abstractmethod
-    async def save(self, file_data: BinaryIO, filename: str, content_type: str) -> tuple[str, str]:
+    async def save(
+        self,
+        file_data: BinaryIO,
+        filename: str,
+        content_type: str,
+        profile_id: Optional[str] = None,
+        entity_field: Optional[str] = None
+    ) -> tuple[str, str]:
         """
         Save file and return (storage_path, access_url)
+
+        Args:
+            file_data: Binary file data
+            filename: Original filename
+            content_type: MIME type
+            profile_id: Profile ID (CMY-xxx, BLD-xxx) for organized storage
+            entity_field: Entity field (gallery, avatar, etc.) for organized storage
+
+        Returns:
+            Tuple of (storage_path, access_url)
         """
         pass
 
@@ -49,27 +106,26 @@ class LocalFileStorage(StorageBackend):
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"LocalFileStorage initialized: base_dir={self.base_dir}, base_url={self.base_url}")
 
-    async def save(self, file_data: BinaryIO, filename: str, content_type: str) -> tuple[str, str]:
+    async def save(
+        self,
+        file_data: BinaryIO,
+        filename: str,
+        content_type: str,
+        profile_id: Optional[str] = None,
+        entity_field: Optional[str] = None
+    ) -> tuple[str, str]:
         """
-        Save file to local filesystem.
+        Save file to local filesystem with organized path structure.
         Returns (storage_path, access_url)
         """
-        # Create subdirectories based on file type
-        file_ext = Path(filename).suffix.lower()
-        if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-            subdir = 'images'
-        elif file_ext in ['.mp4', '.mov', '.avi', '.mkv']:
-            subdir = 'videos'
-        else:
-            subdir = 'files'
+        # Generate organized path
+        storage_path = generate_organized_path(profile_id, entity_field, filename)
 
-        target_dir = self.base_dir / subdir
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # Create full directory path
+        file_path = self.base_dir / storage_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Save file
-        file_path = target_dir / filename
-        storage_path = f"{subdir}/{filename}"
-
         with open(file_path, 'wb') as f:
             content = file_data.read()
             f.write(content)
@@ -100,7 +156,7 @@ class LocalFileStorage(StorageBackend):
 
 
 class S3Storage(StorageBackend):
-    """AWS S3 storage for production"""
+    """AWS S3/MinIO storage for production"""
 
     def __init__(
         self,
@@ -114,6 +170,7 @@ class S3Storage(StorageBackend):
         self.bucket_name = bucket_name
         self.region = region
         self.public_base_url = public_base_url
+        self.endpoint_url = endpoint_url
 
         # Initialize S3 client
         session = boto3.session.Session()
@@ -125,26 +182,25 @@ class S3Storage(StorageBackend):
             aws_secret_access_key=aws_secret_key
         )
 
-        logger.info(f"S3Storage initialized: bucket={bucket_name}, region={region}, endpoint={endpoint_url}")
+        logger.info(f"S3Storage initialized: bucket={bucket_name}, endpoint={endpoint_url}")
 
-    async def save(self, file_data: BinaryIO, filename: str, content_type: str) -> tuple[str, str]:
+    async def save(
+        self,
+        file_data: BinaryIO,
+        filename: str,
+        content_type: str,
+        profile_id: Optional[str] = None,
+        entity_field: Optional[str] = None
+    ) -> tuple[str, str]:
         """
-        Upload file to S3.
+        Upload file to S3/MinIO with organized path structure.
         Returns (storage_path, access_url)
         """
-        # Organize by type
-        file_ext = Path(filename).suffix.lower()
-        if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-            prefix = 'images'
-        elif file_ext in ['.mp4', '.mov', '.avi', '.mkv']:
-            prefix = 'videos'
-        else:
-            prefix = 'files'
-
-        storage_path = f"{prefix}/{filename}"
+        # Generate organized path
+        storage_path = generate_organized_path(profile_id, entity_field, filename)
 
         try:
-            # Upload to S3
+            # Upload to S3/MinIO
             self.s3_client.upload_fileobj(
                 file_data,
                 self.bucket_name,
@@ -158,14 +214,18 @@ class S3Storage(StorageBackend):
             # Generate access URL
             if self.public_base_url:
                 access_url = f"{self.public_base_url}/{storage_path}"
+            elif self.endpoint_url:
+                # MinIO URL format
+                access_url = f"{self.endpoint_url}/{self.bucket_name}/{storage_path}"
             else:
+                # AWS S3 URL format
                 access_url = f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{storage_path}"
 
-            logger.info(f"Uploaded to S3: {storage_path} -> {access_url}")
+            logger.info(f"Uploaded to S3/MinIO: {storage_path} -> {access_url}")
             return storage_path, access_url
 
         except ClientError as e:
-            logger.error(f"Error uploading to S3: {e}")
+            logger.error(f"Error uploading to S3/MinIO: {e}")
             raise
 
     async def delete(self, storage_path: str) -> bool:

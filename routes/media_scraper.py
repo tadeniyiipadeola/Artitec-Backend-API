@@ -14,6 +14,7 @@ from src.media_scraper import MediaScraper
 from schema.media import MediaOut
 from model.user import Users
 from config.security import get_current_user
+from routes.media import media_to_out
 
 router = APIRouter(prefix="/v1/media/scraper")
 
@@ -126,8 +127,8 @@ async def scrape_webpage(
             max_videos=request.max_videos
         )
 
-        # Convert to response schema
-        media_list = [MediaOut.model_validate(media) for media in media_objects]
+        # Convert to response schema with entity profile IDs
+        media_list = [media_to_out(db, media) for media in media_objects]
 
         return ScrapeResponse(
             success=len(media_objects) > 0,
@@ -177,7 +178,7 @@ async def download_from_url(
                 detail="Failed to download media or unsupported format"
             )
 
-        return MediaOut.model_validate(media)
+        return media_to_out(db, media)
 
     except HTTPException:
         raise
@@ -223,8 +224,8 @@ async def batch_download_urls(
             except Exception as e:
                 errors.append(f"Failed to download {media_url}: {str(e)}")
 
-        # Convert to response schema
-        media_list = [MediaOut.model_validate(media) for media in media_objects]
+        # Convert to response schema with entity profile IDs
+        media_list = [media_to_out(db, media) for media in media_objects]
 
         return ScrapeResponse(
             success=len(media_objects) > 0,
