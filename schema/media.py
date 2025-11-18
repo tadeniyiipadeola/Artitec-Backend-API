@@ -91,10 +91,12 @@ class MediaOut(BaseModel):
     alt_text: Optional[str] = None
     caption: Optional[str] = None
     sort_order: Optional[int] = 0
+    source_url: Optional[str] = None  # URL of webpage where media was scraped from
 
     # Ownership
     uploaded_by: str
     is_public: bool
+    is_approved: bool = True  # False for scraped media pending approval
 
     # Timestamps
     created_at: datetime

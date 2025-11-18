@@ -8,6 +8,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import List, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -73,7 +74,8 @@ def get_entity_profile_id(db: Session, entity_type: str, entity_id: int) -> Opti
 # Helper to convert relative URL to full URL
 def make_full_url(url: Optional[str], base_url: str) -> Optional[str]:
     """
-    Convert relative URL to full URL for old local storage files.
+    Convert relative URL to full URL.
+    Uses S3/MinIO public URL if STORAGE_TYPE=s3, otherwise uses base URL.
 
     Args:
         url: The URL from database (could be relative or full)
@@ -89,9 +91,52 @@ def make_full_url(url: Optional[str], base_url: str) -> Optional[str]:
     if url.startswith(('http://', 'https://')):
         return url
 
-    # For old relative URLs like "images/filename.jpg", prepend base URL and /uploads/
-    # This makes them accessible via the static files mount
+    # Check storage type from environment
+    storage_type = os.getenv("STORAGE_TYPE", "local")
+
+    if storage_type == "s3":
+        # Use S3 public base URL for MinIO/S3 storage
+        s3_public_base_url = os.getenv("S3_PUBLIC_BASE_URL")
+        if s3_public_base_url:
+            return f"{s3_public_base_url}/{url}"
+        # Fallback if S3_PUBLIC_BASE_URL not set
+        s3_endpoint = os.getenv("S3_ENDPOINT_URL")
+        s3_bucket = os.getenv("S3_BUCKET_NAME")
+        if s3_endpoint and s3_bucket:
+            return f"{s3_endpoint}/{s3_bucket}/{url}"
+
+    # For local storage, prepend base URL and /uploads/
     return f"{base_url}/uploads/{url}"
+
+
+# Helper to validate media file exists in storage
+def validate_media_exists(media: Media) -> bool:
+    """
+    Check if the media file actually exists in storage.
+    Returns False if the file is missing (orphaned database record).
+    """
+    try:
+        # Skip validation for embedded videos (Vimeo, YouTube)
+        if media.media_type == MediaType.VIDEO and media.content_type == "video/embed":
+            return True
+
+        # Check if the primary file exists
+        if not media.storage_path:
+            logger.warning(f"Media {media.id} has no storage_path")
+            return False
+
+        # Check file existence in storage
+        exists = storage.file_exists(media.storage_path)
+
+        if not exists:
+            logger.warning(f"❌ Orphaned record detected: Media ID {media.id} - file not found: {media.storage_path}")
+
+        return exists
+
+    except Exception as e:
+        logger.error(f"Error validating media {media.id}: {e}")
+        # Return True on error to avoid hiding media due to temporary issues
+        return True
 
 
 # Helper to convert Media to MediaOut with profile ID
@@ -124,8 +169,10 @@ def media_to_out(db: Session, media: Media) -> MediaOut:
         "alt_text": media.alt_text,
         "caption": media.caption,
         "sort_order": media.sort_order,
+        "source_url": media.source_url,
         "uploaded_by": media.uploaded_by,
         "is_public": media.is_public,
+        "is_approved": media.is_approved,
         "created_at": media.created_at,
         "updated_at": media.updated_at,
     }
@@ -355,6 +402,7 @@ def list_media_for_entity(
     """
     List all media for a specific entity.
     Optionally filter by entity_field (e.g., only avatars or only gallery).
+    Validates that files exist in storage before returning.
     """
     query = db.query(Media).filter(
         Media.entity_type == entity_type.value,
@@ -366,9 +414,17 @@ def list_media_for_entity(
 
     media_items = query.order_by(Media.sort_order, Media.created_at.desc()).all()
 
+    # Filter out orphaned records (files that don't exist in storage)
+    validated_media = [m for m in media_items if validate_media_exists(m)]
+
+    # Log if any orphans were found
+    orphan_count = len(media_items) - len(validated_media)
+    if orphan_count > 0:
+        logger.warning(f"⚠️ Found {orphan_count} orphaned media records for {entity_type.value}/{entity_id}")
+
     return MediaListOut(
-        items=[media_to_out(db, m) for m in media_items],
-        total=len(media_items)
+        items=[media_to_out(db, m) for m in validated_media],
+        total=len(validated_media)
     )
 
 
@@ -420,22 +476,59 @@ async def delete_media(
         raise HTTPException(status_code=403, detail="Not authorized to delete this media")
 
     try:
-        # Delete from storage
-        await storage.delete(media.storage_path)
+        # Cascading delete - remove ALL files from storage first
+        files_to_delete = []
 
-        # Delete thumbnails/variants if they exist
-        if media.thumbnail_url:
-            thumb_path = media.storage_path.replace(Path(media.filename).name, f"{Path(media.filename).stem}_thumb.jpg")
-            await storage.delete(thumb_path)
+        # Original file
+        if media.storage_path:
+            files_to_delete.append(media.storage_path)
 
-        # Delete from database
+        # All variants - extract storage paths from URLs
+        if media.thumbnail_url and not media.thumbnail_url.startswith(('http://', 'https://')):
+            files_to_delete.append(media.thumbnail_url)
+        elif media.thumbnail_url:
+            # Extract path from full URL (e.g., http://domain/bucket/path -> path)
+            thumb_path = media.thumbnail_url.split('/')[-1]
+            if thumb_path:
+                files_to_delete.append(thumb_path)
+
+        if media.medium_url and not media.medium_url.startswith(('http://', 'https://')):
+            files_to_delete.append(media.medium_url)
+        elif media.medium_url:
+            medium_path = media.medium_url.split('/')[-1]
+            if medium_path:
+                files_to_delete.append(medium_path)
+
+        if media.large_url and not media.large_url.startswith(('http://', 'https://')):
+            files_to_delete.append(media.large_url)
+        elif media.large_url:
+            large_path = media.large_url.split('/')[-1]
+            if large_path:
+                files_to_delete.append(large_path)
+
+        # Video processed URL
+        if media.video_processed_url and not media.video_processed_url.startswith(('http://', 'https://')):
+            files_to_delete.append(media.video_processed_url)
+
+        # Delete all files from storage
+        deleted_files = []
+        for file_path in files_to_delete:
+            try:
+                success = await storage.delete(file_path)
+                if success:
+                    deleted_files.append(file_path)
+                    logger.info(f"🗑️ Deleted file: {file_path}")
+            except Exception as del_error:
+                logger.warning(f"⚠️  Failed to delete {file_path}: {del_error}")
+
+        # Delete from database (even if some files failed to delete)
         db.delete(media)
         db.commit()
 
-        logger.info(f"🗑️  Deleted media: id={media_id}, public_id={media.public_id}")
+        logger.info(f"🗑️  Deleted media: id={media_id}, public_id={media.public_id}, files={len(deleted_files)}/{len(files_to_delete)}")
 
         return MediaDeleteResponse(
-            message="Media deleted successfully",
+            message=f"Media deleted successfully ({len(deleted_files)} files removed)",
             deleted_id=media_id
         )
 
@@ -604,6 +697,53 @@ async def get_storage_analytics(
     }
 
 
+@router.post("/batch/approve")
+async def approve_media_batch(
+    media_ids: List[int],
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Approve (keep) multiple media items to prevent auto-deletion.
+
+    Scraped media starts as unapproved and is auto-deleted after 7 days.
+    Use this endpoint to mark selected media as approved/permanent.
+    """
+    if len(media_ids) > 100:
+        raise HTTPException(status_code=400, detail="Maximum 100 items per batch")
+
+    approved = []
+    failed = []
+
+    for media_id in media_ids:
+        media = db.query(Media).filter(Media.id == media_id).first()
+
+        if not media:
+            failed.append({"id": media_id, "error": "Media not found"})
+            continue
+
+        # Check access permission
+        if not check_media_access(media, current_user, db):
+            failed.append({"id": media_id, "error": "Not authorized"})
+            continue
+
+        # Approve media
+        media.is_approved = True
+        approved.append(media_id)
+
+    db.commit()
+
+    logger.info(f"✅ Approved {len(approved)} media items for user {current_user['public_id']}")
+
+    return {
+        "approved": approved,
+        "approved_count": len(approved),
+        "failed": failed,
+        "failed_count": len(failed),
+        "message": f"Successfully approved {len(approved)} items"
+    }
+
+
 # Serve uploaded files (for local development)
 @router.get("/serve/{subdir}/{filename}")
 async def serve_file(subdir: str, filename: str):
@@ -617,3 +757,54 @@ async def serve_file(subdir: str, filename: str):
         raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(file_path)
+
+
+@router.get("/health/storage-sync")
+async def check_storage_sync(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Health check endpoint to verify database and storage are in sync.
+    Returns counts of orphaned records and missing files.
+    """
+    total_records = db.query(Media).count()
+    orphaned_count = 0
+    validated_count = 0
+
+    # Sample check (first 100 records) to avoid performance issues
+    sample_size = min(100, total_records)
+    media_sample = db.query(Media).limit(sample_size).all()
+
+    for media in media_sample:
+        # Skip embedded videos
+        if media.media_type == MediaType.VIDEO and media.content_type == "video/embed":
+            validated_count += 1
+            continue
+
+        # Check if file exists
+        if media.storage_path and storage.file_exists(media.storage_path):
+            validated_count += 1
+        else:
+            orphaned_count += 1
+            logger.warning(f"Orphan found in health check: {media.id} - {media.storage_path}")
+
+    # Calculate estimated totals based on sample
+    if sample_size > 0:
+        orphan_ratio = orphaned_count / sample_size
+        estimated_orphans = int(total_records * orphan_ratio)
+    else:
+        estimated_orphans = 0
+
+    health_status = "healthy" if orphaned_count == 0 else "degraded" if orphaned_count < 10 else "critical"
+
+    return {
+        "status": health_status,
+        "total_records": total_records,
+        "sample_size": sample_size,
+        "validated": validated_count,
+        "orphaned_in_sample": orphaned_count,
+        "estimated_total_orphans": estimated_orphans,
+        "storage_type": os.getenv("STORAGE_TYPE", "local"),
+        "timestamp": str(datetime.now())
+    }

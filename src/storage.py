@@ -96,6 +96,13 @@ class StorageBackend(ABC):
         """
         pass
 
+    @abstractmethod
+    def file_exists(self, storage_path: str) -> bool:
+        """
+        Check if file exists in storage
+        """
+        pass
+
 
 class LocalFileStorage(StorageBackend):
     """Local filesystem storage for development"""
@@ -153,6 +160,15 @@ class LocalFileStorage(StorageBackend):
     def get_url(self, storage_path: str) -> str:
         """Get access URL for local file"""
         return f"{self.base_url}/uploads/{storage_path}"
+
+    def file_exists(self, storage_path: str) -> bool:
+        """Check if file exists in local filesystem"""
+        try:
+            file_path = self.base_dir / storage_path
+            return file_path.exists()
+        except Exception as e:
+            logger.error(f"Error checking file existence {storage_path}: {e}")
+            return False
 
 
 class S3Storage(StorageBackend):
@@ -257,6 +273,22 @@ class S3Storage(StorageBackend):
         except ClientError as e:
             logger.error(f"Error generating presigned URL: {e}")
             raise
+
+    def file_exists(self, storage_path: str) -> bool:
+        """Check if file exists in S3/MinIO"""
+        try:
+            self.s3_client.head_object(Bucket=self.bucket_name, Key=storage_path)
+            return True
+        except ClientError as e:
+            # 404 means file doesn't exist
+            if e.response['Error']['Code'] == '404':
+                return False
+            # Log other errors
+            logger.error(f"Error checking file existence in S3: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error checking file existence: {e}")
+            return False
 
 
 # Factory function to get storage backend based on environment

@@ -57,10 +57,12 @@ class Media(Base):
     alt_text = Column(String(500), nullable=True, comment="Accessibility description")
     caption = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=True, default=0, comment="Order within gallery")
+    source_url = Column(Text, nullable=True, comment="Source URL if scraped from a website")
 
     # Ownership and security
     uploaded_by = Column(String(30), nullable=False, comment="User public_id who uploaded this")
     is_public = Column(Boolean, nullable=False, default=True, comment="Whether publicly accessible")
+    is_approved = Column(Boolean, nullable=False, default=True, comment="Whether approved to keep (scraped media starts as False)")
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, server_default=func.now())

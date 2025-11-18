@@ -335,3 +335,288 @@ class FormCommitOut(BaseModel):
             "next_step": "finish"
         }
     })
+
+
+# =============================
+# Enterprise Builder Provisioning
+# =============================
+
+class EnterpriseBuilderProvisionIn(BaseModel):
+    """
+    Admin-initiated enterprise builder account creation.
+    Creates builder profile, primary user account, and invitation code.
+    """
+    # Builder profile information
+    company_name: str
+    website_url: Optional[str] = None
+    enterprise_number: Optional[str] = None
+    company_address: Optional[str] = None
+    staff_size: Optional[str] = None
+    years_in_business: Optional[int] = None
+
+    # Primary contact/user information
+    primary_contact_email: EmailStr
+    primary_contact_first_name: str
+    primary_contact_last_name: str
+    primary_contact_phone: Optional[str] = None
+
+    # Invitation settings
+    invitation_expires_days: Optional[int] = 7  # Default: 7 days
+    custom_message: Optional[str] = None
+
+    # Account settings
+    plan_tier: Literal["pro", "enterprise"] = "enterprise"
+
+    # Community assignments (optional)
+    # List of community IDs where the builder operates
+    # If provided, these communities will be associated with the builder in builder_communities table
+    community_ids: Optional[List[str]] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "company_name": "Perry Homes",
+            "website_url": "https://www.perryhomes.com",
+            "enterprise_number": "ENT-12345",
+            "company_address": "123 Builder Lane, Houston, TX 77002",
+            "staff_size": "500+",
+            "years_in_business": 65,
+            "primary_contact_email": "john.smith@perryhomes.com",
+            "primary_contact_first_name": "John",
+            "primary_contact_last_name": "Smith",
+            "primary_contact_phone": "+18325551234",
+            "invitation_expires_days": 7,
+            "custom_message": "Welcome to Artitec! Please complete your account setup.",
+            "plan_tier": "enterprise",
+            "community_ids": ["COM-123", "COM-456"]
+        }
+    })
+
+
+class InvitationOut(BaseModel):
+    """Response model for invitation details"""
+    invitation_code: str
+    builder_id: str
+    invited_email: str
+    invited_role: Literal["builder", "salesrep", "manager", "viewer"]
+    invited_first_name: Optional[str] = None
+    invited_last_name: Optional[str] = None
+    expires_at: datetime
+    status: Literal["pending", "used", "expired", "revoked"]
+    custom_message: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BuilderProfileOut(BaseModel):
+    """Response model for builder profile"""
+    builder_id: str
+    name: str
+    website: Optional[str] = None
+    verified: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EnterpriseBuilderProvisionOut(BaseModel):
+    """
+    Response after successfully creating enterprise builder account.
+    Includes builder profile, user account, and invitation details.
+    """
+    builder: BuilderProfileOut
+    user: UserOut
+    invitation: InvitationOut
+    message: str
+    next_steps: List[str]
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "builder": {
+                "builder_id": "B_329_XXX_XXX_XXX_XXX",
+                "name": "Perry Homes",
+                "website": "https://www.perryhomes.com",
+                "verified": 1,
+                "created_at": "2025-11-17T12:00:00Z"
+            },
+            "user": {
+                "public_id": "f1b5e2f0-1234-4c9c-9a88-0b2e4dbbe123",
+                "first_name": "John",
+                "last_name": "Smith",
+                "email": "john.smith@perryhomes.com",
+                "role": {"key": "builder", "name": "Builder"},
+                "is_email_verified": False,
+                "onboarding_completed": False,
+                "plan_tier": "enterprise",
+                "created_at": "2025-11-17T12:00:00Z"
+            },
+            "invitation": {
+                "invitation_code": "X3P8Q1R9T2M4",
+                "builder_id": "B_329_XXX_XXX_XXX_XXX",
+                "invited_email": "john.smith@perryhomes.com",
+                "invited_role": "builder",
+                "invited_first_name": "John",
+                "invited_last_name": "Smith",
+                "expires_at": "2025-11-24T12:00:00Z",
+                "status": "pending",
+                "custom_message": "Welcome to Artitec!",
+                "created_at": "2025-11-17T12:00:00Z"
+            },
+            "message": "Enterprise builder account created successfully",
+            "next_steps": [
+                "Send invitation code X3P8Q1R9T2M4 to john.smith@perryhomes.com",
+                "User must register/login and accept invitation to activate account",
+                "After activation, user can invite additional team members"
+            ]
+        }
+    })
+
+
+class InvitationValidateOut(BaseModel):
+    """
+    Response for validating an invitation code.
+    Shows invitation details and builder information.
+    """
+    valid: bool
+    invitation_code: str
+    builder_name: Optional[str] = None
+    invited_email: Optional[str] = None
+    invited_role: Optional[Literal["builder", "salesrep", "manager", "viewer"]] = None
+    expires_at: Optional[datetime] = None
+    custom_message: Optional[str] = None
+    error_message: Optional[str] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "valid": True,
+            "invitation_code": "X3P8Q1R9T2M4",
+            "builder_name": "Perry Homes",
+            "invited_email": "john.smith@perryhomes.com",
+            "invited_role": "builder",
+            "expires_at": "2025-11-24T12:00:00Z",
+            "custom_message": "Welcome to Artitec!",
+            "error_message": None
+        }
+    })
+
+
+class InvitationAcceptIn(BaseModel):
+    """Request to accept an invitation after user registration/login"""
+    invitation_code: str
+    user_public_id: str  # The logged-in user accepting the invitation
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "invitation_code": "X3P8Q1R9T2M4",
+            "user_public_id": "f1b5e2f0-1234-4c9c-9a88-0b2e4dbbe123"
+        }
+    })
+
+
+class TeamMemberOut(BaseModel):
+    """Response model for builder team member"""
+    id: int
+    builder_id: str
+    user_id: str
+    role: Literal["admin", "sales_rep", "manager", "viewer"]
+    permissions: Optional[List[str]] = None
+    communities_assigned: Optional[List[str]] = None
+    is_active: Literal["active", "inactive"]
+    created_at: datetime
+
+    # Nested user info
+    user: Optional[UserOut] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamMemberCreateIn(BaseModel):
+    """Create a new team member invitation (for builder admins inviting additional team members)"""
+    builder_id: str
+    invited_email: EmailStr
+    invited_role: Literal["salesrep", "manager", "viewer"] = "salesrep"
+    invited_first_name: Optional[str] = None
+    invited_last_name: Optional[str] = None
+    permissions: Optional[List[str]] = None
+    # Community assignments (list of community IDs)
+    # Empty/None = access to all communities
+    communities_assigned: Optional[List[str]] = None
+    custom_message: Optional[str] = None
+    invitation_expires_days: Optional[int] = 7
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "builder_id": "BLD-1699564234-X3P8Q1",
+            "invited_email": "jane.doe@perryhomes.com",
+            "invited_role": "salesrep",
+            "invited_first_name": "Jane",
+            "invited_last_name": "Doe",
+            "permissions": ["manage_properties", "schedule_tours"],
+            "communities_assigned": ["CMY-1699564234-Z5R7N4", "CMY-1699564235-M2K9L3"],
+            "custom_message": "Welcome to Perry Homes Cinco Ranch team!",
+            "invitation_expires_days": 7
+        }
+    })
+
+
+class TeamMemberUpdateIn(BaseModel):
+    """Update team member role, permissions, or community assignments"""
+    role: Optional[Literal["admin", "sales_rep", "manager", "viewer"]] = None
+    permissions: Optional[List[str]] = None
+    communities_assigned: Optional[List[str]] = None
+    is_active: Optional[Literal["active", "inactive"]] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "role": "sales_rep",
+            "permissions": ["manage_properties", "schedule_tours", "view_analytics"],
+            "communities_assigned": ["CMY-1699564234-Z5R7N4", "CMY-1699564236-P7Q8R9"],
+            "is_active": "active"
+        }
+    })
+
+
+class CommunityOut(BaseModel):
+    """Response model for community details"""
+    community_id: str
+    name: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    property_count: Optional[int] = 0
+    active_status: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BuilderCommunityListOut(BaseModel):
+    """List of communities where builder is active"""
+    builder_id: str
+    builder_name: str
+    communities: List[CommunityOut]
+    total_communities: int
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "builder_id": "BLD-1699564234-X3P8Q1",
+            "builder_name": "Perry Homes",
+            "communities": [
+                {
+                    "community_id": "CMY-1699564234-Z5R7N4",
+                    "name": "Cinco Ranch",
+                    "city": "Katy",
+                    "state": "TX",
+                    "property_count": 18,
+                    "active_status": "active"
+                },
+                {
+                    "community_id": "CMY-1699564235-M2K9L3",
+                    "name": "Bridgeland",
+                    "city": "Cypress",
+                    "state": "TX",
+                    "property_count": 24,
+                    "active_status": "active"
+                }
+            ],
+            "total_communities": 2
+        }
+    })
