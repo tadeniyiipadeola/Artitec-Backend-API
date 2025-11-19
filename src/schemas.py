@@ -408,6 +408,59 @@ class InvitationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AdminRoleOut(BaseModel):
+    """Role information for admin user management"""
+    id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUserOut(BaseModel):
+    """User response for admin user management with roles"""
+    id: int
+    email: str
+    display_name: Optional[str] = None
+    is_active: bool
+    roles: Optional[list[AdminRoleOut]] = None
+    last_login_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvitationDetailedOut(BaseModel):
+    """Detailed invitation response with builder and user information"""
+    invitation_code: str
+    builder_id: str
+    builder_name: Optional[str] = None
+    invited_email: str
+    invited_role: Literal["builder", "salesrep", "manager", "viewer"]
+    invited_first_name: Optional[str] = None
+    invited_last_name: Optional[str] = None
+    expires_at: datetime
+    status: Literal["pending", "used", "expired", "revoked"]
+    custom_message: Optional[str] = None
+    created_at: datetime
+    created_by_user_id: Optional[str] = None
+    used_at: Optional[datetime] = None
+    used_by_user_id: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvitationListOut(BaseModel):
+    """Paginated list of invitations"""
+    invitations: List[InvitationDetailedOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class BuilderProfileOut(BaseModel):
     """Response model for builder profile"""
     builder_id: str
@@ -618,5 +671,245 @@ class BuilderCommunityListOut(BaseModel):
                 }
             ],
             "total_communities": 2
+        }
+    })
+
+
+# =============================
+# Database Management Schemas
+# =============================
+
+class TableStatOut(BaseModel):
+    """Statistics for a single database table"""
+    table_name: str
+    record_count: int
+    size_mb: float
+    last_updated: Optional[datetime] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "table_name": "users",
+            "record_count": 1543,
+            "size_mb": 12.4,
+            "last_updated": "2025-11-18T12:00:00Z"
+        }
+    })
+
+
+class DatabaseHealthOut(BaseModel):
+    """Database health indicators"""
+    connection_pool: Literal["good", "warning", "error"]
+    connection_pool_value: str
+    query_performance: Literal["good", "warning", "error"]
+    query_performance_value: str
+    storage_usage: Literal["good", "warning", "error"]
+    storage_usage_value: str
+    index_health: Literal["good", "warning", "error"]
+    index_health_value: str
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "connection_pool": "good",
+            "connection_pool_value": "8/20 active",
+            "query_performance": "good",
+            "query_performance_value": "156ms avg",
+            "storage_usage": "good",
+            "storage_usage_value": "45% used",
+            "index_health": "good",
+            "index_health_value": "All optimal"
+        }
+    })
+
+
+class DatabaseStatsOut(BaseModel):
+    """Complete database statistics for admin dashboard"""
+    is_connected: bool
+    database_size_mb: float
+    total_tables: int
+    total_records: int
+    last_backup: Optional[datetime] = None
+    storage_used_gb: float  # MinIO storage usage
+    tables: List[TableStatOut]
+    health: DatabaseHealthOut
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "is_connected": True,
+            "database_size_mb": 245.8,
+            "total_tables": 15,
+            "total_records": 12456,
+            "last_backup": "2025-11-17T02:00:00Z",
+            "storage_used_gb": 67.4,
+            "tables": [
+                {
+                    "table_name": "users",
+                    "record_count": 1543,
+                    "size_mb": 12.4,
+                    "last_updated": "2025-11-18T12:00:00Z"
+                }
+            ],
+            "health": {
+                "connection_pool": "good",
+                "connection_pool_value": "8/20 active",
+                "query_performance": "good",
+                "query_performance_value": "156ms avg",
+                "storage_usage": "good",
+                "storage_usage_value": "45% used",
+                "index_health": "good",
+                "index_health_value": "All optimal"
+            }
+        }
+    })
+
+
+# =============================
+# Admin Platform Analytics Schemas
+# =============================
+
+class AdminStatsTotals(BaseModel):
+    """Total counts across the platform"""
+    users: int
+    active_users: int
+    builders: int
+    communities: int
+    properties: int
+    posts: Optional[int] = None
+    tours: Optional[int] = None
+    documents: Optional[int] = None
+    # User role breakdown
+    buyers: Optional[int] = None
+    sales_reps: Optional[int] = None
+    community_pocs: Optional[int] = None  # Community Point of Contact
+    community_admins: Optional[int] = None
+    admins: Optional[int] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "users": 1543,
+            "active_users": 892,
+            "builders": 45,
+            "communities": 12,
+            "properties": 234,
+            "posts": 567,
+            "tours": 89,
+            "documents": 123,
+            "buyers": 1200,
+            "sales_reps": 50,
+            "community_pocs": 20,
+            "community_admins": 30,
+            "admins": 5
+        }
+    })
+
+
+class AdminStatsPeriod(BaseModel):
+    """Statistics for a specific time period"""
+    from_date: datetime = PydField(alias="from")
+    to_date: datetime = PydField(alias="to")
+    new_users: Optional[int] = None
+    new_builders: Optional[int] = None
+    new_communities: Optional[int] = None
+    new_properties: Optional[int] = None
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "from": "2025-10-18T00:00:00Z",
+                "to": "2025-11-18T00:00:00Z",
+                "new_users": 123,
+                "new_builders": 5,
+                "new_communities": 2,
+                "new_properties": 34
+            }
+        }
+    )
+
+
+class AdminStatsOut(BaseModel):
+    """Platform statistics for admin analytics dashboard"""
+    totals: AdminStatsTotals
+    period: Optional[AdminStatsPeriod] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "totals": {
+                "users": 1543,
+                "active_users": 892,
+                "builders": 45,
+                "communities": 12,
+                "properties": 234,
+                "posts": 567,
+                "tours": 89,
+                "documents": 123
+            },
+            "period": {
+                "from": "2025-10-18T00:00:00Z",
+                "to": "2025-11-18T00:00:00Z",
+                "new_users": 123,
+                "new_builders": 5,
+                "new_communities": 2,
+                "new_properties": 34
+            }
+        }
+    })
+
+
+class AdminAuditLogOut(BaseModel):
+    """Audit log entry for tracking admin actions"""
+    id: int
+    actor_user_id: int
+    action: str  # e.g., "user.create", "builder.provision", "community.create"
+    entity_type: str  # e.g., "user", "builder", "community"
+    entity_id: str
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    metadata: Optional[Dict[str, Union[str, int, bool]]] = None
+    created_at: datetime
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "id": 1,
+            "actor_user_id": 1,
+            "action": "builder.provision",
+            "entity_type": "builder",
+            "entity_id": "BLD-1234567890-ABCDEF",
+            "ip_address": "192.168.1.1",
+            "user_agent": "Mozilla/5.0...",
+            "metadata": {
+                "builder_name": "Acme Construction",
+                "tier": "enterprise"
+            },
+            "created_at": "2025-11-18T12:34:56Z"
+        }
+    })
+
+
+class GrowthDataPoint(BaseModel):
+    """A single data point in a growth time series"""
+    date: datetime
+    count: int
+
+
+class GrowthTimeSeriesOut(BaseModel):
+    """Time series data for growth metrics over a specified period"""
+    users: List[GrowthDataPoint] = []
+    builders: List[GrowthDataPoint] = []
+    communities: List[GrowthDataPoint] = []
+    properties: List[GrowthDataPoint] = []
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "users": [
+                {"date": "2025-11-01T00:00:00Z", "count": 120},
+                {"date": "2025-11-02T00:00:00Z", "count": 125},
+                {"date": "2025-11-03T00:00:00Z", "count": 132}
+            ],
+            "builders": [
+                {"date": "2025-11-01T00:00:00Z", "count": 12},
+                {"date": "2025-11-02T00:00:00Z", "count": 13}
+            ],
+            "communities": [],
+            "properties": []
         }
     })
