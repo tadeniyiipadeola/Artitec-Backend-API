@@ -44,6 +44,11 @@ except Exception as e:  # pragma: no cover
 
 router = APIRouter()
 
+try:
+    from model.enterprise import BuilderTeamMember
+except Exception:
+    BuilderTeamMember = None  # type: ignore
+
 
 # ------------------------------ helpers -------------------------------------
 
@@ -70,6 +75,43 @@ def _apply_includes(query, include: Set[str]):
 
 
 # ------------------------------- routes -------------------------------------
+
+@router.get("/me/profiles", response_model=List[BuilderProfileOut])
+def list_my_builder_profiles(
+    *,
+    db: Session = Depends(get_db),
+    current_user: Users = Depends(get_current_user_optional)
+):
+    """
+    List all builder profiles accessible by the authenticated user.
+    Includes profiles owned by the user or where user is a team member.
+    """
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    user_id = current_user.user_id
+    profiles = []
+
+    # Get profiles owned by this user
+    owned = db.query(BuilderModel).filter(BuilderModel.user_id == user_id).all()
+    profiles.extend(owned)
+
+    # Get profiles where user is a team member (if BuilderTeamMember model exists)
+    if BuilderTeamMember:
+        team_memberships = db.query(BuilderTeamMember).filter(
+            BuilderTeamMember.user_id == user_id
+        ).all()
+
+        for membership in team_memberships:
+            # Get the builder profile by builder_id
+            builder = db.query(BuilderModel).filter(
+                BuilderModel.builder_id == membership.builder_id
+            ).first()
+            if builder and builder not in profiles:
+                profiles.append(builder)
+
+    return [BuilderProfileOut.model_validate(p) for p in profiles]
+
 
 @router.get("/", response_model=List[BuilderProfileOut])
 def list_builder_profiles(

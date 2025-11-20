@@ -30,6 +30,12 @@ class Community(Base):
     city = Column(String(255))
     state = Column(String(64))
     postal_code = Column(String(20))
+    address = Column(String(512))  # Full community address
+
+    # Location
+    total_acres = Column(Float)  # Total acreage of the community
+    latitude = Column(Float)  # Latitude coordinate
+    longitude = Column(Float)  # Longitude coordinate
 
     # Finance
     community_dues = Column(String(64))

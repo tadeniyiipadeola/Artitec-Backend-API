@@ -7,6 +7,7 @@ module separate from routes and SQLAlchemy models.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, HttpUrl, conint, confloat
@@ -111,8 +112,8 @@ class SalesRepOut(SalesRepBase):
     id: int
     builder_id: int
     community_id: Optional[int] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,9 +126,9 @@ class BuilderProfileOut(BuilderProfileBase):
     builder_id: str  # builder_profiles.builder_id (e.g., BLD-1699564234-X3P8Q1)
     user_id: str  # FK to users.user_id (string, e.g., USR-xxx)
 
-    # Timestamps
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    # Timestamps - Pydantic v2 automatically serializes datetime to ISO string in JSON
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     # Expanded relationships (optional, loaded via includes)
     properties: Optional[List[PropertyRef]] = None
