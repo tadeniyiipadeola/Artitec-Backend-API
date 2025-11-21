@@ -14,9 +14,8 @@ from routes.email_verification import router as email_verification_router
 from routes.profiles import buyers, builder, community, sales_rep, community_admin
 from routes.property import property
 from routes.admin_helpers import router as admin_router
-from routes.enterprise import router as enterprise_router
+from routes.admin import router as admin_enterprise_router
 from routes.media import router as media_router
-from routes.media_scraper import router as media_scraper_router
 from fastapi.openapi.utils import get_openapi
 
 # Optional routers (import if present)
@@ -96,9 +95,8 @@ app.include_router(community_admin.router, prefix="/v1/profiles/community-admins
 app.include_router(property.router, prefix="/v1/properties", tags=["Properties Profiles"])
 app.include_router(sales_rep.router, prefix="/v1/profiles/sales-reps", tags=["Sales Representative Profiles"])
 app.include_router(admin_router, prefix="/admin", tags=["Admin Helpers"])
-app.include_router(enterprise_router, prefix="/v1/admin", tags=["Enterprise"])
-app.include_router(media_router, tags=["Media"])
-app.include_router(media_scraper_router, tags=["Media Scraper"])
+app.include_router(admin_enterprise_router, prefix="/v1/admin", tags=["Enterprise"])
+app.include_router(media_router)  # Now includes /v1/media prefix and all sub-routers
 
 
 

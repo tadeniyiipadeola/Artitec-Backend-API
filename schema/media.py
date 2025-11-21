@@ -3,7 +3,7 @@ Pydantic schemas for Media API.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -12,6 +12,20 @@ class MediaType(str, Enum):
     """Media type enum"""
     IMAGE = "IMAGE"
     VIDEO = "VIDEO"
+
+
+class StorageType(str, Enum):
+    """Storage type enum"""
+    LOCAL = "local"
+    S3 = "s3"
+
+
+class ModerationStatus(str, Enum):
+    """Moderation status enum"""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FLAGGED = "flagged"
 
 
 class EntityType(str, Enum):
@@ -55,6 +69,17 @@ class MediaUpdateRequest(BaseModel):
     caption: Optional[str] = None
     sort_order: Optional[int] = None
     is_public: Optional[bool] = None
+    is_primary: Optional[bool] = None
+    tags: Optional[List[str]] = None
+    moderation_status: Optional[ModerationStatus] = None
+
+
+class BatchUploadRequest(BaseModel):
+    """Request for batch media upload"""
+    entity_type: EntityType
+    entity_id: int
+    entity_field: EntityField
+    max_files: int = Field(default=20, le=20, description="Maximum 20 files per batch")
 
 
 # Response Schemas
@@ -74,6 +99,13 @@ class MediaOut(BaseModel):
     height: Optional[int] = None
     duration: Optional[int] = None
 
+    # Duplicate detection
+    image_hash: Optional[str] = None
+
+    # Storage configuration
+    storage_type: Optional[StorageType] = None
+    bucket_name: Optional[str] = None
+
     # URLs - client will use these to display media
     original_url: str
     thumbnail_url: Optional[str] = None
@@ -91,12 +123,16 @@ class MediaOut(BaseModel):
     alt_text: Optional[str] = None
     caption: Optional[str] = None
     sort_order: Optional[int] = 0
+    is_primary: Optional[bool] = False
     source_url: Optional[str] = None  # URL of webpage where media was scraped from
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     # Ownership
     uploaded_by: str
     is_public: bool
     is_approved: bool = True  # False for scraped media pending approval
+    moderation_status: Optional[ModerationStatus] = None
 
     # Timestamps
     created_at: datetime

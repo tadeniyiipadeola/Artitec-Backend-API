@@ -15,7 +15,12 @@ from typing import List, Optional, Sequence, Set
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, selectinload
-from model.profiles.builder import BuilderProfile as BuilderModel
+from model.profiles.builder import (
+    BuilderProfile as BuilderModel,
+    BuilderAward as BuilderAwardModel,
+    BuilderHomePlan as BuilderHomePlanModel,
+    BuilderCredential as BuilderCredentialModel,
+)
 try:
     from model.profiles.builder import SalesRep as SalesRepModel
 except Exception:
@@ -37,6 +42,15 @@ try:
         SalesRepOut,
         SalesRepCreate,
         SalesRepUpdate,
+        BuilderAwardOut,
+        BuilderAwardCreate,
+        BuilderAwardUpdate,
+        BuilderHomePlanOut,
+        BuilderHomePlanCreate,
+        BuilderHomePlanUpdate,
+        BuilderCredentialOut,
+        BuilderCredentialCreate,
+        BuilderCredentialUpdate,
     )
 except Exception as e:  # pragma: no cover
     raise ImportError("schema.builder.* Pydantic schemas are required") from e
@@ -377,6 +391,367 @@ def delete_builder_sales_rep(
     ).first()
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sales rep not found for this builder")
+
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# --------------------------- awards (scoped by builder user_id) ---------------------------
+
+@router.get("/{user_id}/awards", response_model=List[BuilderAwardOut])
+def list_builder_awards(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+):
+    """List all awards for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    rows = (
+        db.query(BuilderAwardModel)
+        .filter(BuilderAwardModel.builder_id == builder.id)
+        .order_by(BuilderAwardModel.year.desc())
+        .all()
+    )
+    return [BuilderAwardOut.model_validate(r) for r in rows]
+
+
+@router.post("/{user_id}/awards", response_model=BuilderAwardOut, status_code=status.HTTP_201_CREATED)
+def create_builder_award(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    payload: BuilderAwardCreate,
+):
+    """Create an award for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    # Force the builder_id to the resolved builder PK to prevent cross-builder creation
+    data = payload.model_dump(exclude_none=True)
+    data["builder_id"] = builder.id
+
+    obj = BuilderAwardModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return BuilderAwardOut.model_validate(obj)
+
+
+@router.put("/{user_id}/awards/{award_id}", response_model=BuilderAwardOut)
+@router.patch("/{user_id}/awards/{award_id}", response_model=BuilderAwardOut)
+def update_builder_award(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    award_id: int,
+    payload: BuilderAwardUpdate,
+):
+    """Update an award for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    obj = db.query(BuilderAwardModel).filter(
+        BuilderAwardModel.id == award_id,
+        BuilderAwardModel.builder_id == builder.id
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Award not found for this builder")
+
+    data = payload.model_dump(exclude_none=True)
+    # Prevent reassignment to another builder_id via payload
+    data.pop("builder_id", None)
+
+    for k, v in data.items():
+        if hasattr(obj, k):
+            setattr(obj, k, v)
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return BuilderAwardOut.model_validate(obj)
+
+
+@router.delete("/{user_id}/awards/{award_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_builder_award(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    award_id: int,
+):
+    """Delete an award for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    obj = db.query(BuilderAwardModel).filter(
+        BuilderAwardModel.id == award_id,
+        BuilderAwardModel.builder_id == builder.id
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Award not found for this builder")
+
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# --------------------------- home plans (scoped by builder user_id) ---------------------------
+
+@router.get("/{user_id}/home-plans", response_model=List[BuilderHomePlanOut])
+def list_builder_home_plans(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+):
+    """List all home plans for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    rows = (
+        db.query(BuilderHomePlanModel)
+        .filter(BuilderHomePlanModel.builder_id == builder.id)
+        .order_by(BuilderHomePlanModel.name.asc())
+        .all()
+    )
+    return [BuilderHomePlanOut.model_validate(r) for r in rows]
+
+
+@router.post("/{user_id}/home-plans", response_model=BuilderHomePlanOut, status_code=status.HTTP_201_CREATED)
+def create_builder_home_plan(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    payload: BuilderHomePlanCreate,
+):
+    """Create a home plan for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    # Force the builder_id to the resolved builder PK to prevent cross-builder creation
+    data = payload.model_dump(exclude_none=True)
+    data["builder_id"] = builder.id
+
+    obj = BuilderHomePlanModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return BuilderHomePlanOut.model_validate(obj)
+
+
+@router.put("/{user_id}/home-plans/{plan_id}", response_model=BuilderHomePlanOut)
+@router.patch("/{user_id}/home-plans/{plan_id}", response_model=BuilderHomePlanOut)
+def update_builder_home_plan(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    plan_id: int,
+    payload: BuilderHomePlanUpdate,
+):
+    """Update a home plan for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    obj = db.query(BuilderHomePlanModel).filter(
+        BuilderHomePlanModel.id == plan_id,
+        BuilderHomePlanModel.builder_id == builder.id
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home plan not found for this builder")
+
+    data = payload.model_dump(exclude_none=True)
+    # Prevent reassignment to another builder_id via payload
+    data.pop("builder_id", None)
+
+    for k, v in data.items():
+        if hasattr(obj, k):
+            setattr(obj, k, v)
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return BuilderHomePlanOut.model_validate(obj)
+
+
+@router.delete("/{user_id}/home-plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_builder_home_plan(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    plan_id: int,
+):
+    """Delete a home plan for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    obj = db.query(BuilderHomePlanModel).filter(
+        BuilderHomePlanModel.id == plan_id,
+        BuilderHomePlanModel.builder_id == builder.id
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home plan not found for this builder")
+
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# --------------------------- credentials (scoped by builder user_id) ---------------------------
+
+@router.get("/{user_id}/credentials", response_model=List[BuilderCredentialOut])
+def list_builder_credentials(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    credential_type: Optional[str] = Query(None, description="Filter by credential type: license, certification, or membership"),
+):
+    """List all credentials for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    query = db.query(BuilderCredentialModel).filter(BuilderCredentialModel.builder_id == builder.id)
+
+    if credential_type:
+        query = query.filter(BuilderCredentialModel.credential_type == credential_type)
+
+    rows = query.order_by(BuilderCredentialModel.credential_type.asc(), BuilderCredentialModel.name.asc()).all()
+    return [BuilderCredentialOut.model_validate(r) for r in rows]
+
+
+@router.post("/{user_id}/credentials", response_model=BuilderCredentialOut, status_code=status.HTTP_201_CREATED)
+def create_builder_credential(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    payload: BuilderCredentialCreate,
+):
+    """Create a credential for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    # Force the builder_id to the resolved builder PK to prevent cross-builder creation
+    data = payload.model_dump(exclude_none=True)
+    data["builder_id"] = builder.id
+
+    obj = BuilderCredentialModel(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return BuilderCredentialOut.model_validate(obj)
+
+
+@router.put("/{user_id}/credentials/{credential_id}", response_model=BuilderCredentialOut)
+@router.patch("/{user_id}/credentials/{credential_id}", response_model=BuilderCredentialOut)
+def update_builder_credential(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    credential_id: int,
+    payload: BuilderCredentialUpdate,
+):
+    """Update a credential for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    obj = db.query(BuilderCredentialModel).filter(
+        BuilderCredentialModel.id == credential_id,
+        BuilderCredentialModel.builder_id == builder.id
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found for this builder")
+
+    data = payload.model_dump(exclude_none=True)
+    # Prevent reassignment to another builder_id via payload
+    data.pop("builder_id", None)
+
+    for k, v in data.items():
+        if hasattr(obj, k):
+            setattr(obj, k, v)
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return BuilderCredentialOut.model_validate(obj)
+
+
+@router.delete("/{user_id}/credentials/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_builder_credential(
+    *,
+    db: Session = Depends(get_db),
+    user_id: str,
+    credential_id: int,
+):
+    """Delete a credential for a specific builder (by builder's user user_id)"""
+    user = _ensure_user(db, user_id)
+    uid = user.user_id
+
+    # Get builder profile
+    builder = db.query(BuilderModel).filter(BuilderModel.user_id == uid).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    obj = db.query(BuilderCredentialModel).filter(
+        BuilderCredentialModel.id == credential_id,
+        BuilderCredentialModel.builder_id == builder.id
+    ).first()
+    if not obj:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential not found for this builder")
 
     db.delete(obj)
     db.commit()

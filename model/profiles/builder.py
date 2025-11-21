@@ -87,6 +87,9 @@ class BuilderProfile(Base):
     # Relationships
     user = relationship("Users", back_populates="builder_profile", lazy="joined", uselist=False)
     sales_reps = relationship("SalesRep", back_populates="builder", cascade="all, delete-orphan")
+    awards = relationship("BuilderAward", back_populates="builder", cascade="all, delete-orphan")
+    home_plans = relationship("BuilderHomePlan", back_populates="builder", cascade="all, delete-orphan")
+    credentials = relationship("BuilderCredential", back_populates="builder", cascade="all, delete-orphan")
 
     # Many-to-many relationships
     properties = relationship(
@@ -105,3 +108,87 @@ class BuilderProfile(Base):
 
     def __repr__(self):
         return f"<BuilderProfile(name='{self.name}', rating={self.rating})>"
+
+
+# --- Builder Awards ---------------------------------------------------------
+class BuilderAward(Base):
+    """
+    Awards and recognitions received by a builder.
+    Mirrors Swift BuilderProfile.awards: [Award]
+    """
+    __tablename__ = "builder_awards"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    # FK to builder_profiles.id (internal DB ID)
+    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False)
+
+    title = Column(String(255), nullable=False)      # e.g., "Best Custom Home Builder"
+    awarded_by = Column(String(255), nullable=True)  # e.g., "National Association of Home Builders"
+    year = Column(Integer, nullable=True)            # e.g., 2023
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+    # Relationship
+    builder = relationship("BuilderProfile", back_populates="awards")
+
+    def __repr__(self):
+        return f"<BuilderAward(title='{self.title}', year={self.year})>"
+
+
+# --- Builder Home Plans -----------------------------------------------------
+class BuilderHomePlan(Base):
+    """
+    Home plans/floor plans offered by a builder.
+    Mirrors Swift BuilderProfile.homePlans: [HomePlan]
+    """
+    __tablename__ = "builder_home_plans"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    # FK to builder_profiles.id (internal DB ID)
+    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False)
+
+    name = Column(String(255), nullable=False)           # e.g., "The Oakmont"
+    series = Column(String(255), nullable=False)         # e.g., "Executive Series"
+    sqft = Column(Integer, nullable=False)               # Square footage
+    beds = Column(Integer, nullable=False)               # Number of bedrooms
+    baths = Column(Float, nullable=False)                # Number of bathrooms (can be 2.5)
+    stories = Column(Integer, nullable=False)            # Number of stories
+    starting_price = Column(String(64), nullable=False)  # Stored as string (e.g., "450000.00")
+    description = Column(Text)                           # Detailed description
+    image_url = Column(String(1024))                     # Optional image URL
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+    # Relationship
+    builder = relationship("BuilderProfile", back_populates="home_plans")
+
+    def __repr__(self):
+        return f"<BuilderHomePlan(name='{self.name}', series='{self.series}')>"
+
+
+# --- Builder Credentials ----------------------------------------------------
+class BuilderCredential(Base):
+    """
+    Builder licenses, certifications, and memberships.
+    Mirrors Swift BuilderProfile.licenses, certifications, memberships
+    Consolidated into one table with a type field.
+    """
+    __tablename__ = "builder_credentials"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    # FK to builder_profiles.id (internal DB ID)
+    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="CASCADE"), nullable=False)
+
+    name = Column(String(255), nullable=False)           # e.g., "General Contractor License #12345"
+    credential_type = Column(String(64), nullable=False) # "license", "certification", or "membership"
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+    # Relationship
+    builder = relationship("BuilderProfile", back_populates="credentials")
+
+    def __repr__(self):
+        return f"<BuilderCredential(type='{self.credential_type}', name='{self.name}')>"

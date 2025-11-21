@@ -3,7 +3,7 @@ Media model for storing photos and videos.
 Supports property photos, community images, profile avatars, videos, posts/reels.
 """
 
-from sqlalchemy import Column, Integer, String, Text, BigInteger, Boolean, DateTime, Enum as SQLEnum, Index
+from sqlalchemy import Column, Integer, String, Text, BigInteger, Boolean, DateTime, Enum as SQLEnum, Index, JSON
 from sqlalchemy.sql import func
 from model.base import Base
 import enum
@@ -13,6 +13,20 @@ class MediaType(enum.Enum):
     """Media type enum"""
     IMAGE = "IMAGE"
     VIDEO = "VIDEO"
+
+
+class StorageType(enum.Enum):
+    """Storage type enum"""
+    LOCAL = "local"
+    S3 = "s3"
+
+
+class ModerationStatus(enum.Enum):
+    """Moderation status enum"""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FLAGGED = "flagged"
 
 
 class Media(Base):
@@ -40,6 +54,10 @@ class Media(Base):
     # Duplicate detection
     image_hash = Column(String(64), nullable=True, comment="Perceptual hash for duplicate detection")
 
+    # Storage configuration
+    storage_type = Column(SQLEnum(StorageType), nullable=False, default=StorageType.LOCAL, comment="Storage backend: local or s3")
+    bucket_name = Column(String(100), nullable=True, comment="S3/MinIO bucket name if using S3 storage")
+
     # Storage URLs - flexible for local filesystem or S3
     storage_path = Column(Text, nullable=False, comment="Base storage path or S3 bucket key")
     original_url = Column(Text, nullable=False, comment="URL to access original file")
@@ -57,12 +75,16 @@ class Media(Base):
     alt_text = Column(String(500), nullable=True, comment="Accessibility description")
     caption = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=True, default=0, comment="Order within gallery")
+    is_primary = Column(Boolean, nullable=False, default=False, comment="Primary/featured media for entity")
     source_url = Column(Text, nullable=True, comment="Source URL if scraped from a website")
+    tags = Column(JSON, nullable=True, comment="Searchable tags as JSON array")
+    file_metadata = Column('metadata', JSON, nullable=True, comment="EXIF data, processing info, etc. as JSON")
 
     # Ownership and security
     uploaded_by = Column(String(30), nullable=False, comment="User public_id who uploaded this")
     is_public = Column(Boolean, nullable=False, default=True, comment="Whether publicly accessible")
     is_approved = Column(Boolean, nullable=False, default=True, comment="Whether approved to keep (scraped media starts as False)")
+    moderation_status = Column(SQLEnum(ModerationStatus), nullable=False, default=ModerationStatus.APPROVED, comment="Moderation status for content review")
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, server_default=func.now())

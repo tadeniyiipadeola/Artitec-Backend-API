@@ -136,3 +136,88 @@ class BuilderProfileOut(BuilderProfileBase):
 
     # Enable ORM mode
     model_config = ConfigDict(from_attributes=True)
+
+
+# ------------------------------------------------------------
+# BuilderAward schemas
+# ------------------------------------------------------------
+class BuilderAwardBase(BaseModel):
+    title: str
+    awarded_by: Optional[str] = None
+    year: Optional[int] = None
+
+class BuilderAwardCreate(BuilderAwardBase):
+    pass
+
+class BuilderAwardUpdate(BaseModel):
+    title: Optional[str] = None
+    awarded_by: Optional[str] = None
+    year: Optional[int] = None
+
+class BuilderAwardOut(BuilderAwardBase):
+    id: int
+    builder_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ------------------------------------------------------------
+# BuilderHomePlan schemas
+# ------------------------------------------------------------
+class BuilderHomePlanBase(BaseModel):
+    name: str
+    series: str
+    sqft: conint(gt=0)
+    beds: conint(ge=0)
+    baths: confloat(ge=0)
+    stories: conint(gt=0)
+    starting_price: str  # Stored as string (e.g., "450000.00")
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+class BuilderHomePlanCreate(BuilderHomePlanBase):
+    pass
+
+class BuilderHomePlanUpdate(BaseModel):
+    name: Optional[str] = None
+    series: Optional[str] = None
+    sqft: Optional[conint(gt=0)] = None
+    beds: Optional[conint(ge=0)] = None
+    baths: Optional[confloat(ge=0)] = None
+    stories: Optional[conint(gt=0)] = None
+    starting_price: Optional[str] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+class BuilderHomePlanOut(BuilderHomePlanBase):
+    id: int
+    builder_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ------------------------------------------------------------
+# BuilderCredential schemas
+# ------------------------------------------------------------
+class BuilderCredentialBase(BaseModel):
+    name: str
+    credential_type: str  # "license", "certification", or "membership"
+
+class BuilderCredentialCreate(BuilderCredentialBase):
+    pass
+
+class BuilderCredentialUpdate(BaseModel):
+    name: Optional[str] = None
+    credential_type: Optional[str] = None
+
+class BuilderCredentialOut(BuilderCredentialBase):
+    id: int
+    builder_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

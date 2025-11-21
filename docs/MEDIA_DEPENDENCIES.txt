@@ -1,0 +1,19 @@
+# Media Management System Dependencies
+# Add these to your requirements.txt
+
+# Image Processing
+Pillow>=10.0.0          # Image manipulation and processing
+imagehash>=4.3.1        # Perceptual hashing for duplicate detection
+
+# Storage
+boto3>=1.28.0           # AWS SDK (used for MinIO/S3)
+minio>=7.1.0            # MinIO Python client (optional, boto3 is sufficient)
+
+# Optional: Video Processing
+# ffmpeg-python>=0.2.0  # Python bindings for ffmpeg (requires ffmpeg installed)
+
+# Already included in base requirements (verify these exist):
+# FastAPI
+# SQLAlchemy
+# Pydantic
+# python-multipart  # Required for file uploads
