@@ -19,6 +19,7 @@ from .teams import router as teams_router
 from .communities import router as communities_router
 from .analytics import router as analytics_router
 from .users import router as users_router
+from .collection import router as collection_router
 
 # Create main router that combines all admin routes
 router = APIRouter()
@@ -30,5 +31,6 @@ router.include_router(teams_router, tags=["Enterprise - Teams"])
 router.include_router(communities_router, tags=["Enterprise - Communities"])
 router.include_router(analytics_router, tags=["Enterprise - Analytics"])
 router.include_router(users_router, tags=["Enterprise - Users"])
+router.include_router(collection_router, tags=["Admin - Data Collection"])
 
 __all__ = ["router"]

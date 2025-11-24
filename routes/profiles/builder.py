@@ -100,29 +100,80 @@ def list_my_builder_profiles(
     List all builder profiles accessible by the authenticated user.
     Includes profiles owned by the user or where user is a team member.
     """
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        print("\n========================================")
+        print("📡 API: GET /v1/profiles/builders/me/profiles")
+        print("========================================")
 
-    user_id = current_user.user_id
+        if not current_user:
+            print("❌ ERROR: No authenticated user (401)")
+            print("========================================\n")
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_id = current_user.user_id
+        print(f"✅ Authenticated user: {current_user.email}")
+        print(f"   User ID: {user_id}")
+        print(f"   Role: {current_user.role}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"\n❌ FATAL ERROR in endpoint:")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error message: {str(e)}")
+        import traceback
+        print(f"   Traceback:")
+        traceback.print_exc()
+        print("========================================\n")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
     profiles = []
 
     # Get profiles owned by this user
+    print(f"\n🔍 Querying builder_profile table WHERE user_id = '{user_id}'")
     owned = db.query(BuilderModel).filter(BuilderModel.user_id == user_id).all()
+    print(f"   Found {len(owned)} owned profile(s)")
+    for profile in owned:
+        print(f"      - ID: {profile.id}, Name: {profile.name}, Builder ID: {profile.builder_id}")
     profiles.extend(owned)
 
     # Get profiles where user is a team member (if BuilderTeamMember model exists)
     if BuilderTeamMember:
+        print(f"\n🔍 Querying builder_team_member table WHERE user_id = '{user_id}'")
         team_memberships = db.query(BuilderTeamMember).filter(
             BuilderTeamMember.user_id == user_id
         ).all()
+        print(f"   Found {len(team_memberships)} team membership(s)")
 
         for membership in team_memberships:
+            print(f"      - Team membership: builder_id = {membership.builder_id}")
             # Get the builder profile by builder_id
             builder = db.query(BuilderModel).filter(
                 BuilderModel.builder_id == membership.builder_id
             ).first()
-            if builder and builder not in profiles:
-                profiles.append(builder)
+            if builder:
+                if builder not in profiles:
+                    print(f"        → Adding profile: {builder.name} (ID: {builder.id})")
+                    profiles.append(builder)
+                else:
+                    print(f"        → Profile already in list (owned): {builder.name}")
+            else:
+                print(f"        ⚠️ WARNING: builder_id {membership.builder_id} not found in builder_profile table")
+    else:
+        print("\n⚠️ BuilderTeamMember model not available - skipping team member lookup")
+
+    print(f"\n✅ Total profiles to return: {len(profiles)}")
+    if profiles:
+        print("   Profile summary:")
+        for i, p in enumerate(profiles, 1):
+            print(f"      {i}. {p.name} ({p.city}, {p.state}) - {p.builder_id}")
+    else:
+        print("   ⚠️ WARNING: No profiles found for this user!")
+        print("   Possible issues:")
+        print("      1. User has no builder_profile records")
+        print("      2. builder_profile.user_id doesn't match user.user_id")
+        print("      3. No team memberships exist for this user")
+
+    print("========================================\n")
 
     return [BuilderProfileOut.model_validate(p) for p in profiles]
 

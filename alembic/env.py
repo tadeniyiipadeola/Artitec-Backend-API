@@ -19,6 +19,10 @@ load_dotenv(PROJECT_ROOT / ".env")
 # Import your SQLAlchemy Base metadata
 from model.base import Base  # <- make sure this is correct for your project
 
+# Load all models so they're registered with Base.metadata
+from model import load_all_models
+load_all_models()
+
 config = context.config
 
 # Prefer DB_URL from env over alembic.ini
