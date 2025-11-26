@@ -46,10 +46,87 @@ class Property(Base):
     lot_sqft = Column(Integer)
     year_built = Column(Integer)
 
+    # Property classification
+    property_type = Column(String(64), nullable=True)  # single_family, townhome, condo, etc.
+    listing_status = Column(String(50), nullable=True)  # available, pending, under_contract, sold
+
+    # Structural details
+    stories = Column(Integer, nullable=True)
+    garage_spaces = Column(Integer, nullable=True)
+
+    # Lot characteristics
+    corner_lot = Column(Boolean, default=False, nullable=True)
+    cul_de_sac = Column(Boolean, default=False, nullable=True)
+    lot_backing = Column(String(128), nullable=True)  # greenbelt, pond, street, etc.
+    views = Column(String(255), nullable=True)
+
+    # School information
+    school_district = Column(String(255), nullable=True)
+    elementary_school = Column(String(255), nullable=True)
+    middle_school = Column(String(255), nullable=True)
+    high_school = Column(String(255), nullable=True)
+    school_ratings = Column(JSON, nullable=True)
+
+    # Builder-specific information
+    model_home = Column(Boolean, default=False, nullable=True)
+    quick_move_in = Column(Boolean, default=False, nullable=True)
+    construction_stage = Column(String(64), nullable=True)  # pre_construction, under_construction, completed
+    estimated_completion = Column(String(64), nullable=True)  # Date as string
+    builder_plan_name = Column(String(255), nullable=True)
+    builder_series = Column(String(255), nullable=True)
+    elevation_options = Column(String(255), nullable=True)
+
+    # Interior features
+    flooring_types = Column(String(255), nullable=True)
+    countertop_materials = Column(String(255), nullable=True)
+    appliances = Column(String(255), nullable=True)
+    game_room = Column(Boolean, default=False, nullable=True)
+    study_office = Column(Boolean, default=False, nullable=True)
+    bonus_rooms = Column(String(255), nullable=True)
+
+    # Outdoor amenities
+    pool_type = Column(String(64), nullable=True)  # private, community, none
+    covered_patio = Column(Boolean, default=False, nullable=True)
+    outdoor_kitchen = Column(Boolean, default=False, nullable=True)
+    landscaping = Column(String(255), nullable=True)
+
+    # Pricing & market information
+    price_per_sqft = Column(Numeric(10, 2), nullable=True)
+    days_on_market = Column(Integer, nullable=True)
+    builder_incentives = Column(Text, nullable=True)
+    upgrades_included = Column(Text, nullable=True)
+    upgrades_value = Column(Numeric(12, 2), nullable=True)
+
+    # HOA & restrictions
+    hoa_fee_monthly = Column(Numeric(10, 2), nullable=True)
+    pet_restrictions = Column(String(255), nullable=True)
+    lease_allowed = Column(Boolean, default=True, nullable=True)
+
+    # Energy & utilities
+    energy_rating = Column(String(64), nullable=True)
+    internet_providers = Column(String(255), nullable=True)
+
+    # Tax & financial
+    annual_property_tax = Column(Numeric(12, 2), nullable=True)
+    assumable_loan = Column(Boolean, default=False, nullable=True)
+
+    # Media & virtual tours
+    virtual_tour_url = Column(String(1024), nullable=True)
+    floor_plan_url = Column(String(1024), nullable=True)
+    matterport_link = Column(String(1024), nullable=True)
+
+    # Availability & showing
+    move_in_date = Column(String(64), nullable=True)  # Date as string
+    showing_instructions = Column(Text, nullable=True)
+
+    # Collection metadata
+    source_url = Column(String(1024), nullable=True)
+    data_confidence = Column(Float, nullable=True)
+
     # Associations / flags
     builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="SET NULL"), nullable=True)
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="SET NULL"), nullable=True)
-    has_pool = Column(Boolean, default=False)
+    has_pool = Column(Boolean, default=False)  # Legacy field, use pool_type instead
 
     # Media (store as JSON array of URLs)
     media_urls = Column(JSON)

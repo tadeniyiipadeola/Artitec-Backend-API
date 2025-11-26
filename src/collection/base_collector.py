@@ -6,11 +6,13 @@ Provides common functionality for all data collectors.
 import os
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 from anthropic import Anthropic
 from sqlalchemy.orm import Session
-from model.collection import CollectionJob, CollectionChange, EntityMatch, CollectionSource
+from sqlalchemy.exc import OperationalError, DBAPIError
+from model.collection import CollectionJob, CollectionChange, EntityMatch, CollectionSource, CollectionJobLog
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,72 @@ class BaseCollector:
 
         return job
 
+    def _db_commit_with_retry(self, max_retries: int = 3, initial_delay: float = 1.0) -> bool:
+        """
+        Commit database transaction with retry logic and exponential backoff.
+
+        Args:
+            max_retries: Maximum number of retry attempts
+            initial_delay: Initial delay in seconds before first retry
+
+        Returns:
+            True if commit successful, False otherwise
+
+        Raises:
+            Exception: If all retries exhausted
+        """
+        delay = initial_delay
+
+        for attempt in range(max_retries):
+            try:
+                self.db.commit()
+                return True
+            except (OperationalError, DBAPIError) as e:
+                error_msg = str(e)
+
+                # Check if it's a connection/timeout error
+                is_connection_error = any(err in error_msg.lower() for err in [
+                    'connection', 'timeout', 'timed out', 'can\'t connect',
+                    'lost connection', 'server has gone away'
+                ])
+
+                if is_connection_error and attempt < max_retries - 1:
+                    logger.warning(
+                        f"Database connection error on attempt {attempt + 1}/{max_retries}: {error_msg}. "
+                        f"Retrying in {delay}s..."
+                    )
+
+                    # Rollback failed transaction
+                    try:
+                        self.db.rollback()
+                    except Exception:
+                        pass
+
+                    # Wait before retry with exponential backoff
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+
+                    # Try to refresh connection
+                    try:
+                        self.db.connection()
+                    except Exception:
+                        pass
+                else:
+                    # Not a connection error or final attempt - raise
+                    logger.error(f"Database commit failed after {attempt + 1} attempts: {error_msg}")
+                    self.db.rollback()
+                    raise
+            except Exception as e:
+                # Non-DB error - rollback and raise immediately
+                logger.error(f"Unexpected error during commit: {str(e)}")
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
+                raise
+
+        return False
+
     def update_job_status(self, status: str, **kwargs):
         """
         Update job status and metadata.
@@ -73,37 +141,138 @@ class BaseCollector:
         self.db.commit()
         logger.info(f"Job {self.job_id} status updated to {status}")
 
-    def call_claude(self, prompt: str, max_tokens: int = 4096) -> Dict[str, Any]:
+    def update_progress(self, items_found: Optional[int] = None,
+                       new_entities_found: Optional[int] = None,
+                       changes_detected: Optional[int] = None):
+        """
+        Update job progress counts without changing status.
+        Useful for providing incremental progress updates during long-running jobs.
+
+        Args:
+            items_found: Total items found so far
+            new_entities_found: New entities created so far
+            changes_detected: Changes detected so far
+        """
+        if items_found is not None:
+            self.job.items_found = items_found
+        if new_entities_found is not None:
+            self.job.new_entities_found = new_entities_found
+        if changes_detected is not None:
+            self.job.changes_detected = changes_detected
+
+        self.db.commit()
+        logger.debug(f"Job {self.job_id} progress: items={self.job.items_found}, "
+                    f"entities={self.job.new_entities_found}, changes={self.job.changes_detected}")
+
+    def log(self, message: str, level: str = "INFO", stage: Optional[str] = None,
+            log_data: Optional[Dict[str, Any]] = None):
+        """
+        Write a log entry to the database for this job.
+        Logs are displayed in the admin UI for monitoring and debugging.
+
+        Args:
+            message: The log message
+            level: Log level (DEBUG, INFO, SUCCESS, WARNING, ERROR)
+            stage: Optional stage name (searching, parsing, matching, saving, etc.)
+            log_data: Optional structured data (counts, URLs, errors, etc.)
+        """
+        log_entry = CollectionJobLog(
+            job_id=self.job_id,
+            level=level.upper(),
+            message=message,
+            stage=stage,
+            log_data=log_data
+        )
+        self.db.add(log_entry)
+        self.db.commit()
+
+        # Also log to Python logger for backend monitoring
+        log_func = getattr(logger, level.lower(), logger.info)
+        log_func(f"[{self.job_id}] {message}")
+
+    def call_claude(self, prompt: str, max_tokens: int = 4096, timeout: int = 300) -> Dict[str, Any]:
         """
         Call Claude API with a prompt.
 
         Args:
             prompt: The prompt to send to Claude
             max_tokens: Maximum tokens in response
+            timeout: Timeout in seconds (default: 300s = 5 minutes)
 
         Returns:
             Parsed JSON response from Claude
+
+        Raises:
+            TimeoutError: If API call takes longer than timeout
+            Exception: Other API errors
         """
         try:
+            logger.info(f"Calling Claude API (max_tokens={max_tokens}, timeout={timeout}s)...")
+
             message = self.anthropic_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 max_tokens=max_tokens,
+                timeout=float(timeout),  # Anthropic client timeout
                 messages=[{
                     "role": "user",
                     "content": prompt
                 }]
             )
 
+            logger.info(f"Claude API call completed successfully")
+
             # Extract text content
             response_text = message.content[0].text
 
             # Try to parse as JSON
             try:
+                # First try direct parsing
                 return json.loads(response_text)
             except json.JSONDecodeError:
-                # If not valid JSON, return as text
+                # Try to extract JSON from markdown code blocks
+                import re
+                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    json_text = json_match.group(1)
+                    try:
+                        return json.loads(json_text)
+                    except json.JSONDecodeError:
+                        pass
+
+                # Try to find any JSON object in the response
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    json_text = json_match.group(0)
+                    try:
+                        return json.loads(json_text)
+                    except json.JSONDecodeError:
+                        # Try to repair incomplete JSON (truncated response)
+                        # Close any open arrays and objects
+                        repaired = json_text.rstrip()
+                        # Count open/close brackets
+                        open_braces = repaired.count('{') - repaired.count('}')
+                        open_brackets = repaired.count('[') - repaired.count(']')
+
+                        # Close arrays first, then objects
+                        for _ in range(open_brackets):
+                            repaired += ']'
+                        for _ in range(open_braces):
+                            repaired += '}'
+
+                        try:
+                            parsed = json.loads(repaired)
+                            logger.warning(f"Successfully repaired incomplete JSON (added {open_brackets} ] and {open_braces} }})")
+                            return parsed
+                        except json.JSONDecodeError:
+                            pass
+
+                # If still not valid JSON, return as text
+                logger.warning("Could not parse Claude response as JSON")
                 return {"raw_response": response_text}
 
+        except TimeoutError as e:
+            logger.error(f"Claude API call timed out after {timeout} seconds: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"Claude API call failed: {str(e)}")
             raise
@@ -160,16 +329,26 @@ class BaseCollector:
         )
 
         self.db.add(change)
-        self.db.commit()
 
         # Update job's changes_detected count
         self.job.changes_detected += 1
-        self.db.commit()
 
-        logger.info(
-            f"Recorded change for {entity_type} "
-            f"(entity_id={entity_id}, field={field_name}, type={change_type})"
-        )
+        # Commit both changes in a single transaction with retry logic
+        try:
+            self._db_commit_with_retry(max_retries=3, initial_delay=1.0)
+            logger.info(
+                f"Recorded change for {entity_type} "
+                f"(entity_id={entity_id}, field={field_name}, type={change_type})"
+            )
+        except (OperationalError, DBAPIError) as e:
+            error_msg = f"Database error recording change: {str(e)}"
+            logger.error(error_msg)
+            # Try to log the error to the database if possible
+            try:
+                self.log(error_msg, "ERROR", "saving", {"entity_type": entity_type, "change_type": change_type})
+            except Exception:
+                pass  # If logging fails, at least we logged to Python logger
+            raise
 
         return change
 

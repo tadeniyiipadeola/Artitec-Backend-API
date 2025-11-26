@@ -145,6 +145,51 @@ async def add_security_headers(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     return response
 
+def _start_job_monitor():
+    """Start background thread to monitor and cleanup stuck jobs"""
+    import threading
+    import time
+    from datetime import datetime, timedelta
+
+    def monitor_stuck_jobs():
+        """Periodically check for and reset stuck jobs"""
+        while True:
+            try:
+                time.sleep(300)  # Check every 5 minutes
+
+                from model.collection import CollectionJob
+                db = SessionLocal()
+
+                try:
+                    # Find jobs stuck for more than 30 minutes
+                    cutoff = datetime.utcnow() - timedelta(minutes=30)
+                    stuck_jobs = db.query(CollectionJob).filter(
+                        CollectionJob.status == "running",
+                        CollectionJob.started_at < cutoff
+                    ).all()
+
+                    if stuck_jobs:
+                        logger.warning(f"🔧 Found {len(stuck_jobs)} stuck job(s), marking as failed")
+                        for job in stuck_jobs:
+                            job.status = "failed"
+                            job.error_message = "Job timed out after 30+ minutes (auto-cleanup)"
+                            job.completed_at = datetime.utcnow()
+                        db.commit()
+                        logger.info(f"✅ Reset {len(stuck_jobs)} stuck job(s)")
+                except Exception as e:
+                    logger.error(f"❌ Job monitor error: {e}")
+                    db.rollback()
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"❌ Job monitor thread crashed: {e}", exc_info=True)
+
+    # Start monitor in daemon thread
+    monitor_thread = threading.Thread(target=monitor_stuck_jobs, daemon=True)
+    monitor_thread.start()
+    logger.info("🔍 Started background job monitor (checks every 5 minutes)")
+
+
 # NOTE: FastAPI recommends lifespan context for newer apps; startup event is fine for dev.
 @app.on_event("startup")
 def _startup():
@@ -177,6 +222,9 @@ def _startup():
             logger.warning("Skipping role seeding; likely tables not present yet: %s", e)
         finally:
             db.close()
+
+    # Start background job monitor to cleanup stuck jobs
+    _start_job_monitor()
 
 # Optional quick health route
 @app.get("/health")

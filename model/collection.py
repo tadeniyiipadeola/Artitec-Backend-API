@@ -34,6 +34,41 @@ def generate_source_id() -> str:
 
 
 # ===================================================================
+# CollectionJobLog Model
+# ===================================================================
+
+class CollectionJobLog(Base):
+    """
+    Stores detailed execution logs for collection jobs.
+
+    Each log entry represents a single event during job execution.
+    Logs are displayed in the admin UI for debugging and monitoring.
+    """
+    __tablename__ = "collection_job_logs"
+
+    id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    job_id = Column(String(50), ForeignKey('collection_jobs.job_id', ondelete='CASCADE'),
+                    nullable=False, index=True)
+
+    # Log entry details
+    timestamp = Column(TIMESTAMP, nullable=False, default=func.now(), index=True)
+    level = Column(
+        String(20), nullable=False, default='INFO',
+        comment="DEBUG, INFO, SUCCESS, WARNING, ERROR"
+    )
+    message = Column(Text, nullable=False, comment="Log message")
+
+    # Optional structured data
+    log_data = Column(JSON, nullable=True, comment="Additional structured data (counts, URLs, etc.)")
+
+    # For tracking progress through stages
+    stage = Column(
+        String(50), nullable=True,
+        comment="Collection stage: searching, parsing, matching, saving, etc."
+    )
+
+
+# ===================================================================
 # CollectionJob Model
 # ===================================================================
 

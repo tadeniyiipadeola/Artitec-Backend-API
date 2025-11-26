@@ -57,29 +57,50 @@ class PropertyCollector(BaseCollector):
         """Execute property data collection."""
         try:
             self.update_job_status("running")
-            logger.info(f"Starting property collection job {self.job_id}")
+            self.log("Starting property collection job", "INFO", "initialization")
 
             if not self.builder or not self.community:
-                raise ValueError("Both builder and community context required for property collection")
+                error_msg = "Both builder and community context required for property collection"
+                self.log(error_msg, "ERROR", "initialization")
+                raise ValueError(error_msg)
 
             builder_name = self.builder.name
             community_name = self.community.name
             filters = self.job.search_filters or {}
             location = filters.get("location", f"{self.community.city}, {self.community.state}")
 
-            # Call Claude to collect property data
-            logger.info(
-                f"Collecting properties for {builder_name} in {community_name}, {location}"
+            self.log(
+                f"Collecting properties for {builder_name} in {community_name}",
+                "INFO",
+                "initialization",
+                {
+                    "builder_id": self.builder.id,
+                    "builder_name": builder_name,
+                    "community_id": self.community.id,
+                    "community_name": community_name,
+                    "location": location
+                }
             )
+
+            # Call Claude to collect property data
+            self.log(f"Calling Claude API to search for properties", "INFO", "searching")
             prompt = generate_property_collection_prompt(
                 builder_name,
                 community_name,
                 location
             )
             collected_data = self.call_claude(prompt)
+            self.log("Claude API call completed successfully", "SUCCESS", "searching")
 
             # Process collected properties
             properties = collected_data.get("properties", [])
+            self.log(
+                f"Found {len(properties)} properties to process",
+                "SUCCESS",
+                "parsing",
+                {"properties_count": len(properties)}
+            )
+
             new_count = self._process_properties(properties, collected_data)
 
             # Update job results
@@ -89,16 +110,25 @@ class PropertyCollector(BaseCollector):
                 new_entities_found=new_count
             )
 
-            logger.info(
-                f"Property collection completed. "
-                f"Found {len(properties)} properties, {new_count} new"
+            self.log(
+                f"Property collection completed: {len(properties)} total, {new_count} new",
+                "SUCCESS",
+                "completed",
+                {
+                    "total_properties": len(properties),
+                    "new_properties": new_count,
+                    "changes_detected": self.job.changes_detected
+                }
             )
 
         except Exception as e:
-            logger.error(f"Property collection failed: {str(e)}", exc_info=True)
+            error_msg = str(e)
+            self.log(f"Property collection failed: {error_msg}", "ERROR", "failed",
+                    {"error": error_msg, "error_type": type(e).__name__})
+            logger.error(f"Property collection failed: {error_msg}", exc_info=True)
             self.update_job_status(
                 "failed",
-                error_message=str(e)
+                error_message=error_msg
             )
             raise
 
@@ -114,13 +144,29 @@ class PropertyCollector(BaseCollector):
             Number of new properties discovered
         """
         new_property_count = 0
+        updated_count = 0
         sources = collected_data.get("sources", [])
 
-        for prop_data in properties:
+        self.log(
+            f"Processing {len(properties)} properties",
+            "INFO",
+            "matching",
+            {"total_to_process": len(properties)}
+        )
+
+        for idx, prop_data in enumerate(properties, 1):
             address = prop_data.get("address")
             if not address:
+                self.log("Skipping property with no address", "WARNING", "matching")
                 logger.warning("Skipping property with no address")
                 continue
+
+            self.log(
+                f"Processing property {idx}/{len(properties)}: {address}",
+                "INFO",
+                "matching",
+                {"progress": f"{idx}/{len(properties)}", "address": address}
+            )
 
             source_url = prop_data.get("source_url") or (sources[0] if sources else None)
             confidence = prop_data.get("confidence", 0.8)
@@ -130,13 +176,33 @@ class PropertyCollector(BaseCollector):
 
             if existing_property:
                 # Update existing property
+                self.log(
+                    f"Found existing property match: {address}",
+                    "INFO",
+                    "matching",
+                    {"property_id": existing_property.id, "address": address}
+                )
                 self._update_existing_property(existing_property, prop_data, source_url, confidence)
                 # Verify listing is still active
                 self.status_manager.verify_property_listing(existing_property.id)
+                updated_count += 1
             else:
                 # Create new property
+                self.log(
+                    f"New property discovered: {address}",
+                    "INFO",
+                    "matching",
+                    {"address": address}
+                )
                 self._create_new_property(prop_data, source_url, confidence)
                 new_property_count += 1
+
+        self.log(
+            f"Property processing complete: {new_property_count} new, {updated_count} updated",
+            "SUCCESS",
+            "saving",
+            {"new_properties": new_property_count, "updated_properties": updated_count}
+        )
 
         return new_property_count
 
@@ -220,6 +286,7 @@ class PropertyCollector(BaseCollector):
             "upgrades_value": "upgrades_value"
         }
 
+        changes_found = 0
         for collected_field, db_field in field_mapping.items():
             if collected_field in prop_data:
                 new_value = prop_data[collected_field]
@@ -244,6 +311,15 @@ class PropertyCollector(BaseCollector):
                     confidence=confidence,
                     source_url=source_url
                 )
+                changes_found += 1
+
+        if changes_found > 0:
+            self.log(
+                f"Detected {changes_found} field changes for property",
+                "INFO",
+                "saving",
+                {"property_id": prop.id, "changes_count": changes_found}
+            )
 
     def _create_new_property(
         self,
@@ -252,13 +328,18 @@ class PropertyCollector(BaseCollector):
         confidence: float
     ):
         """Create new property from collected data."""
+        address = prop_data.get("address", "Unknown")
+        price = prop_data.get("price")
+        beds = prop_data.get("beds")
+        baths = prop_data.get("baths")
+
         entity_data = {
             # IDs
             "builder_id": self.builder.id,
             "community_id": self.community.id if self.community else None,
             # Basic info
             "title": prop_data.get("title"),
-            "address": prop_data.get("address"),
+            "address": address,
             "city": prop_data.get("city"),
             "state": prop_data.get("state"),
             "zip_code": prop_data.get("zip_code"),
@@ -266,9 +347,9 @@ class PropertyCollector(BaseCollector):
             "property_type": prop_data.get("property_type"),
             "status": prop_data.get("status", "available"),
             # Specifications
-            "price": prop_data.get("price"),
-            "beds": prop_data.get("beds"),
-            "baths": prop_data.get("baths"),
+            "price": price,
+            "beds": beds,
+            "baths": baths,
             "sqft": prop_data.get("sqft"),
             "lot_size": prop_data.get("lot_size"),
             "stories": prop_data.get("stories"),
@@ -300,6 +381,19 @@ class PropertyCollector(BaseCollector):
             "floor_plan_url": prop_data.get("floor_plan_url"),
             "images": prop_data.get("images", [])
         }
+
+        self.log(
+            f"Recording new property: {address} (${price:,} | {beds}bed/{baths}bath)" if price else f"Recording new property: {address}",
+            "INFO",
+            "saving",
+            {
+                "address": address,
+                "price": price,
+                "beds": beds,
+                "baths": baths,
+                "confidence": confidence
+            }
+        )
 
         self.record_change(
             entity_type="property",

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, ForeignKey,Boolean, TIMESTAMP, func
+from sqlalchemy import Column, String, Text, ForeignKey, Boolean, TIMESTAMP, func
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
 from model.base import Base
@@ -22,9 +22,12 @@ class SalesRep(Base):
     title = Column(String(128))
     email = Column(String(255))
     phone = Column(String(64))
+    office_phone = Column(String(64), nullable=True)  # Separate office phone
     avatar_url = Column(String(1024))
     region = Column(String(128))
     office_address = Column(String(255))
+    bio = Column(Text, nullable=True)  # Sales rep biography
+    is_active = Column(Boolean, default=True, nullable=True)  # Active status
     verified = Column(Boolean, default=False)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)

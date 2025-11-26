@@ -62,14 +62,27 @@ class BuilderProfile(Base):
     communities_served = Column(JSON)            # Swift: communitiesServed
 
     # Optional extended fields
-    about = Column(Text)
+    about = Column(Text)                         # Legacy field - use 'description' for collector
+    description = Column(Text, nullable=True)    # Primary description field for collector
     phone = Column(String(64))
     email = Column(String(255))
-    address = Column(String(255))  # Street address
+    headquarters_address = Column(String(255), nullable=True)  # Full headquarters address
     city = Column(String(255))
     state = Column(String(64))
     postal_code = Column(String(20))
     verified = Column(Integer, default=0)        # 0 = not verified, 1 = verified
+
+    # Company information
+    founded_year = Column(Integer, nullable=True)
+    employee_count = Column(Integer, nullable=True)
+    service_areas = Column(JSON, nullable=True)  # Geographic areas served
+
+    # Pricing information
+    price_range_min = Column(Integer, nullable=True)
+    price_range_max = Column(Integer, nullable=True)
+
+    # Review metrics
+    review_count = Column(Integer, nullable=True)
 
     # Former BuilderProfile metadata (merged here)
     title = Column(String(128))                  # e.g., "Owner", "Regional Manager"
