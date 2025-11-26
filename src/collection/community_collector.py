@@ -723,7 +723,7 @@ class CommunityCollector(BaseCollector):
         """
         Process collected data for new community discovery.
 
-        Create CollectionChange record for new entity creation.
+        Check for duplicates first, then create CollectionChange record.
         """
         self.log("Entered _process_new_community method", "INFO", "saving")
 
@@ -735,6 +735,44 @@ class CommunityCollector(BaseCollector):
         confidence = collected_data.get("confidence", {}).get("overall", 0.8)
         sources = collected_data.get("sources", [])
         source_url = sources[0] if sources else None
+
+        # Check for duplicate community BEFORE processing
+        community_name = collected_data.get("name", "Unknown")
+        self.log(f"Checking for duplicate community: {community_name}", "INFO", "matching")
+
+        from .duplicate_detection import find_duplicate_community
+
+        duplicate_id, match_confidence, match_method = find_duplicate_community(
+            db=self.db,
+            name=community_name,
+            city=collected_data.get("city"),
+            state=collected_data.get("state"),
+            website=collected_data.get("website"),
+            address=collected_data.get("location")
+        )
+
+        if duplicate_id:
+            self.log(
+                f"Found existing community match: ID {duplicate_id} (confidence: {match_confidence:.2f}, method: {match_method})",
+                "INFO",
+                "matching",
+                {"duplicate_id": duplicate_id, "confidence": match_confidence, "method": match_method}
+            )
+
+            # Record entity match for tracking
+            self.record_entity_match(
+                discovered_entity_type="community",
+                discovered_name=community_name,
+                discovered_data=collected_data,
+                discovered_location=collected_data.get("location"),
+                matched_entity_id=duplicate_id,
+                match_confidence=match_confidence,
+                match_method=match_method
+            )
+
+            # Skip creating new entity change - it's a duplicate
+            self.log(f"Skipping duplicate community: {community_name}", "INFO", "matching")
+            return
 
         # Generate enterprise_number_hoa
         self.log("Generating enterprise number...", "INFO", "saving")

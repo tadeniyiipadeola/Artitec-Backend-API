@@ -1025,9 +1025,37 @@ async def review_change(
         try:
             if change.entity_type == "community":
                 from model.profiles.community import Community
+                from src.collection.duplicate_detection import find_duplicate_community
                 import uuid
 
                 data = change.proposed_entity_data
+
+                # FINAL SAFETY CHECK: Check for duplicates before creating
+                duplicate_id, match_confidence, match_method = find_duplicate_community(
+                    db=db,
+                    name=data.get("name"),
+                    city=data.get("city"),
+                    state=data.get("state"),
+                    website=data.get("website"),
+                    address=data.get("location")
+                )
+
+                if duplicate_id:
+                    # Duplicate found - reject the change and log warning
+                    change.status = "rejected"
+                    change.review_notes = f"Duplicate detected during approval: matched existing community ID {duplicate_id} (confidence: {match_confidence:.2f}, method: {match_method}). {request.notes or ''}"
+                    db.commit()
+
+                    logger.warning(
+                        f"Blocked duplicate community creation during approval - Change {change_id} matched existing ID {duplicate_id} "
+                        f"(confidence: {match_confidence:.2f}, method: {match_method})"
+                    )
+
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Duplicate community detected: matches existing community ID {duplicate_id} with {match_confidence:.0%} confidence via {match_method}"
+                    )
+
                 community = Community(
                     community_id=f"CMY-{uuid.uuid4().hex[:8].upper()}",
                     name=data.get("name"),
@@ -1057,7 +1085,142 @@ async def review_change(
 
                 logger.info(f"Created new community {community.community_id} from change {change_id}")
 
-            # Add support for other entity types here (builder, property, etc.)
+            elif change.entity_type == "builder":
+                from model.profiles.builder import BuilderProfile, builder_communities, BuilderAward, BuilderCredential
+                from src.collection.duplicate_detection import find_duplicate_builder
+                import uuid
+                import re
+
+                data = change.proposed_entity_data
+
+                # Get community_id from proposed data (this is the DB ID, not community_id string)
+                community_id = data.get("community_id")
+
+                # Extract city and state from headquarters_address if not provided separately
+                city = data.get("city")
+                state = data.get("state")
+                postal_code = data.get("zip_code")
+
+                if not city or not state:
+                    address = data.get("address") or data.get("headquarters_address") or ""
+                    # Try to parse city, state from address (e.g., "Houston, TX 77001")
+                    match = re.search(r',\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s*(\d{5})?', address)
+                    if match:
+                        if not city:
+                            city = match.group(1).strip()
+                        if not state:
+                            state = match.group(2).strip()
+                        if not postal_code and match.group(3):
+                            postal_code = match.group(3).strip()
+
+                # FINAL SAFETY CHECK: Check for duplicates before creating
+                duplicate_id, match_confidence, match_method = find_duplicate_builder(
+                    db=db,
+                    name=data.get("name"),
+                    city=city,
+                    state=state,
+                    website=data.get("website_url") or data.get("website"),
+                    phone=data.get("phone"),
+                    email=data.get("email")
+                )
+
+                if duplicate_id:
+                    # Duplicate found - reject the change and log warning
+                    change.status = "rejected"
+                    change.review_notes = f"Duplicate detected during approval: matched existing builder ID {duplicate_id} (confidence: {match_confidence:.2f}, method: {match_method}). {request.notes or ''}"
+                    db.commit()
+
+                    logger.warning(
+                        f"Blocked duplicate builder creation during approval - Change {change_id} matched existing ID {duplicate_id} "
+                        f"(confidence: {match_confidence:.2f}, method: {match_method})"
+                    )
+
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Duplicate builder detected: matches existing builder ID {duplicate_id} with {match_confidence:.0%} confidence via {match_method}"
+                    )
+
+                # Generate unique builder_id
+                timestamp = int(time.time())
+                random_suffix = uuid.uuid4().hex[:6].upper()
+                builder_id_str = f"BLD-{timestamp}-{random_suffix}"
+
+                # Create builder with default admin user
+                builder = BuilderProfile(
+                    builder_id=builder_id_str,
+                    user_id="USR-1763443503-N3UTFX",  # Default admin user
+                    name=data.get("name"),
+                    city=city,
+                    state=state,
+                    postal_code=postal_code,
+                    headquarters_address=data.get("address") or data.get("headquarters_address"),
+                    phone=data.get("phone"),
+                    email=data.get("email"),
+                    website=data.get("website_url") or data.get("website"),
+                    founded_year=data.get("year_founded") or data.get("founded_year"),
+                    description=data.get("description"),
+                    rating=data.get("rating"),
+                    employee_count=data.get("employee_count"),
+                    price_range_min=data.get("price_range_min"),
+                    price_range_max=data.get("price_range_max"),
+                    review_count=data.get("review_count"),
+                    verified=0  # Start as unverified
+                )
+                db.add(builder)
+                db.flush()  # Get the builder ID
+
+                change.entity_id = builder.id
+
+                # Create awards if provided
+                awards = data.get("awards", [])
+                if awards and isinstance(awards, list):
+                    for award_data in awards:
+                        if isinstance(award_data, dict):
+                            award = BuilderAward(
+                                builder_id=builder.id,
+                                title=award_data.get("title") or award_data.get("name"),
+                                awarded_by=award_data.get("awarded_by") or award_data.get("issuer"),
+                                year=award_data.get("year")
+                            )
+                            db.add(award)
+                    logger.info(f"Created {len(awards)} awards for builder {builder.builder_id}")
+
+                # Create credentials (certifications/licenses) if provided
+                certifications = data.get("certifications", [])
+                if certifications and isinstance(certifications, list):
+                    for cert_data in certifications:
+                        if isinstance(cert_data, dict):
+                            credential = BuilderCredential(
+                                builder_id=builder.id,
+                                name=cert_data.get("name") or cert_data.get("title"),
+                                credential_type="certification"
+                            )
+                            db.add(credential)
+                        elif isinstance(cert_data, str):
+                            # Handle simple string certifications
+                            credential = BuilderCredential(
+                                builder_id=builder.id,
+                                name=cert_data,
+                                credential_type="certification"
+                            )
+                            db.add(credential)
+                    logger.info(f"Created {len(certifications)} credentials for builder {builder.builder_id}")
+
+                # Link builder to community if community_id provided
+                if community_id:
+                    try:
+                        stmt = builder_communities.insert().values(
+                            builder_id=builder.id,
+                            community_id=community_id
+                        )
+                        db.execute(stmt)
+                        logger.info(f"Linked builder {builder.builder_id} to community ID {community_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to link builder to community {community_id}: {e}")
+
+                logger.info(f"Created new builder {builder.builder_id} from change {change_id}")
+
+            # Add support for other entity types here (property, etc.)
 
         except Exception as e:
             logger.error(f"Failed to create entity from change {change_id}: {e}")

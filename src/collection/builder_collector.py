@@ -41,33 +41,42 @@ class BuilderCollector(BaseCollector):
         """Execute builder data collection."""
         try:
             self.update_job_status("running")
-            logger.info(f"Starting builder collection job {self.job_id}")
+            self.log("Starting builder collection job", "INFO", "initialization")
 
             # Get builder name and location from job
             if self.builder:
                 builder_name = self.builder.name
                 location = None  # Can get from communities if needed
+                self.log(f"Updating existing builder: {builder_name}", "INFO", "initialization",
+                        {"builder_id": self.builder.id, "builder_name": builder_name})
             else:
                 builder_name = self.job.search_query
                 filters = self.job.search_filters or {}
                 location = filters.get("location")
+                self.log(f"Discovering new builder: {builder_name}", "INFO", "initialization",
+                        {"builder_name": builder_name, "location": location})
 
             # Call Claude to collect builder data
-            logger.info(f"Collecting data for builder: {builder_name}")
+            self.log(f"Calling Claude API to collect data for: {builder_name}", "INFO", "searching")
             prompt = generate_builder_collection_prompt(builder_name, location)
             collected_data = self.call_claude(prompt)
+            self.log("Claude API call completed successfully", "SUCCESS", "searching")
 
             # Process collected data
             if self.builder:
+                self.log(f"Processing updates for builder: {builder_name}", "INFO", "parsing")
                 self._process_existing_builder(collected_data)
             else:
+                self.log(f"Processing new builder data: {builder_name}", "INFO", "parsing")
                 self._process_new_builder(collected_data)
 
             # Create cascade jobs for sales reps and properties
+            self.log("Creating cascade jobs for sales reps and properties", "INFO", "saving")
             self._create_cascade_jobs(collected_data)
 
             # Update builder activity status
             if self.builder:
+                self.log("Updating builder activity status", "INFO", "saving")
                 self.status_manager.update_builder_activity(self.builder.id)
 
             # Update job results
@@ -77,19 +86,24 @@ class BuilderCollector(BaseCollector):
                 new_entities_found=0 if self.builder else 1
             )
 
-            logger.info("Builder collection completed")
+            self.log("Builder collection completed successfully", "SUCCESS", "completed",
+                    {"builder_name": builder_name, "changes_detected": self.job.changes_detected})
 
         except Exception as e:
-            logger.error(f"Builder collection failed: {str(e)}", exc_info=True)
+            error_msg = str(e)
+            self.log(f"Builder collection failed: {error_msg}", "ERROR", "failed",
+                    {"error": error_msg, "error_type": type(e).__name__})
+            logger.error(f"Builder collection failed: {error_msg}", exc_info=True)
             self.update_job_status(
                 "failed",
-                error_message=str(e)
+                error_message=error_msg
             )
             raise
 
     def _process_existing_builder(self, collected_data: Dict[str, Any]):
         """Process collected data for existing builder."""
         if "raw_response" in collected_data:
+            self.log("Claude returned non-JSON response", "WARNING", "parsing")
             logger.warning("Claude returned non-JSON response")
             return
 
@@ -113,6 +127,7 @@ class BuilderCollector(BaseCollector):
             "review_count": "review_count"
         }
 
+        changes_found = 0
         for collected_field, db_field in field_mapping.items():
             if collected_field in collected_data:
                 new_value = collected_data[collected_field]
@@ -129,13 +144,22 @@ class BuilderCollector(BaseCollector):
                         confidence=confidence,
                         source_url=source_url
                     )
+                    changes_found += 1
+
+        if changes_found > 0:
+            self.log(f"Detected {changes_found} field changes", "INFO", "matching",
+                    {"changes_count": changes_found})
 
         # Process awards
         if "awards" in collected_data:
+            awards_count = len(collected_data["awards"])
+            self.log(f"Processing {awards_count} awards", "INFO", "matching")
             self._process_awards(collected_data["awards"], source_url)
 
         # Process certifications
         if "certifications" in collected_data:
+            certs_count = len(collected_data["certifications"])
+            self.log(f"Processing {certs_count} certifications", "INFO", "matching")
             self._process_certifications(collected_data["certifications"], source_url)
 
         # Update tracking fields
@@ -164,20 +188,82 @@ class BuilderCollector(BaseCollector):
     def _process_new_builder(self, collected_data: Dict[str, Any]):
         """Process collected data for new builder discovery."""
         if "raw_response" in collected_data:
+            self.log("Claude returned non-JSON response", "WARNING", "parsing")
             logger.warning("Claude returned non-JSON response")
             return
 
         confidence = collected_data.get("confidence", {}).get("overall", 0.8)
         sources = collected_data.get("sources", [])
         source_url = sources[0] if sources else None
+        builder_name = collected_data.get("name", "Unknown")
+
+        # Check for duplicate builder BEFORE processing
+        self.log(f"Checking for duplicate builder: {builder_name}", "INFO", "matching")
+
+        from .duplicate_detection import find_duplicate_builder
+
+        duplicate_id, match_confidence, match_method = find_duplicate_builder(
+            db=self.db,
+            name=builder_name,
+            city=collected_data.get("city"),
+            state=collected_data.get("state"),
+            website=collected_data.get("website"),
+            phone=collected_data.get("phone"),
+            email=collected_data.get("email")
+        )
+
+        if duplicate_id:
+            self.log(
+                f"Found existing builder match: ID {duplicate_id} (confidence: {match_confidence:.2f}, method: {match_method})",
+                "INFO",
+                "matching",
+                {"duplicate_id": duplicate_id, "confidence": match_confidence, "method": match_method}
+            )
+
+            # Record entity match for tracking
+            self.record_entity_match(
+                discovered_entity_type="builder",
+                discovered_name=builder_name,
+                discovered_data=collected_data,
+                discovered_location=f"{collected_data.get('city', '')}, {collected_data.get('state', '')}".strip(', '),
+                matched_entity_id=duplicate_id,
+                match_confidence=match_confidence,
+                match_method=match_method
+            )
+
+            # Skip creating new entity change - it's a duplicate
+            self.log(f"Skipping duplicate builder: {builder_name}", "INFO", "matching")
+            return
+
+        # Extract city and state from headquarters_address if available
+        headquarters_address = collected_data.get("headquarters_address")
+        city = collected_data.get("city")
+        state = collected_data.get("state")
+        zip_code = collected_data.get("zip_code")
+
+        # Parse address to extract city/state if not provided
+        if headquarters_address and (not city or not state):
+            import re
+            # Try to parse city, state from address (e.g., "123 Main St, Houston, TX 77001")
+            match = re.search(r',\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s*(\d{5})?', headquarters_address)
+            if match:
+                if not city:
+                    city = match.group(1).strip()
+                if not state:
+                    state = match.group(2).strip()
+                if not zip_code and match.group(3):
+                    zip_code = match.group(3).strip()
 
         entity_data = {
-            "name": collected_data.get("name"),
+            "name": builder_name,
             "description": collected_data.get("description"),
             "website": collected_data.get("website"),
             "phone": collected_data.get("phone"),
             "email": collected_data.get("email"),
-            "headquarters_address": collected_data.get("headquarters_address"),
+            "headquarters_address": headquarters_address,
+            "city": city,
+            "state": state,
+            "zip_code": zip_code,
             "founded_year": collected_data.get("founded_year"),
             "employee_count": collected_data.get("employee_count"),
             "service_areas": collected_data.get("service_areas", []),
@@ -191,6 +277,14 @@ class BuilderCollector(BaseCollector):
             "data_confidence": confidence
         }
 
+        # If this builder job was spawned from a community job, include the community_id
+        if self.job.parent_entity_type == "community" and self.job.parent_entity_id:
+            entity_data["community_id"] = self.job.parent_entity_id
+            self.log(f"Linking builder to community ID: {self.job.parent_entity_id}", "INFO", "matching")
+
+        self.log(f"Recording new builder entity: {builder_name}", "INFO", "matching",
+                {"builder_name": builder_name, "confidence": confidence})
+
         self.record_change(
             entity_type="builder",
             entity_id=None,
@@ -203,7 +297,7 @@ class BuilderCollector(BaseCollector):
 
         self.record_entity_match(
             discovered_entity_type="builder",
-            discovered_name=collected_data.get("name", "Unknown"),
+            discovered_name=builder_name,
             discovered_data=collected_data,
             matched_entity_id=None,
             match_confidence=None,
@@ -280,6 +374,7 @@ class BuilderCollector(BaseCollector):
     def _create_cascade_jobs(self, collected_data: Dict[str, Any]):
         """Create cascade jobs for sales reps and properties."""
         if not self.builder and self.job.job_type != "update":
+            self.log("Skipping cascade jobs (new builder not yet approved)", "INFO", "saving")
             logger.info("Skipping cascade jobs for new builder (not yet approved)")
             return
 
@@ -288,7 +383,10 @@ class BuilderCollector(BaseCollector):
         community_name = filters.get("community_name")
         location = filters.get("location")
 
+        jobs_created = []
+
         # Create sales rep collection job
+        self.log("Creating sales rep discovery job", "INFO", "saving")
         sales_rep_job = CollectionJob(
             entity_type="sales_rep",
             entity_id=None,
@@ -308,9 +406,11 @@ class BuilderCollector(BaseCollector):
             initiated_by=self.job.initiated_by
         )
         self.db.add(sales_rep_job)
+        jobs_created.append("sales_rep")
 
         # Create property collection job if we have community context
         if community_id or community_name:
+            self.log("Creating property inventory job", "INFO", "saving")
             property_job = CollectionJob(
                 entity_type="property",
                 entity_id=None,
@@ -330,6 +430,9 @@ class BuilderCollector(BaseCollector):
                 initiated_by=self.job.initiated_by
             )
             self.db.add(property_job)
+            jobs_created.append("property")
 
         self.db.commit()
+        self.log(f"Created {len(jobs_created)} cascade jobs: {', '.join(jobs_created)}", "SUCCESS", "saving",
+                {"jobs_created": jobs_created})
         logger.info("Created cascade jobs for sales reps and properties")
