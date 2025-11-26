@@ -4,12 +4,13 @@ Admin Collection Routes
 API endpoints for managing data collection jobs.
 """
 import logging
+from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from config.db import get_db
-from model.collection import CollectionJob, CollectionChange, EntityMatch
+from model.collection import CollectionJob, CollectionChange, EntityMatch, CollectionJobLog
 from src.collection.job_executor import (
     JobExecutor,
     create_community_collection_job,
@@ -57,6 +58,30 @@ class CollectionJobResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            'datetime': lambda v: v.isoformat() if v else None
+        }
+
+    @classmethod
+    def from_orm(cls, obj):
+        """Custom from_orm to handle datetime serialization."""
+        data = {
+            'job_id': obj.job_id,
+            'entity_type': obj.entity_type,
+            'entity_id': obj.entity_id,
+            'job_type': obj.job_type,
+            'status': obj.status,
+            'priority': obj.priority,
+            'search_query': obj.search_query,
+            'items_found': obj.items_found or 0,
+            'changes_detected': obj.changes_detected or 0,
+            'new_entities_found': obj.new_entities_found or 0,
+            'error_message': obj.error_message,
+            'created_at': obj.created_at.isoformat() if obj.created_at else None,
+            'started_at': obj.started_at.isoformat() if obj.started_at else None,
+            'completed_at': obj.completed_at.isoformat() if obj.completed_at else None,
+        }
+        return cls(**data)
 
 
 class CollectionChangeResponse(BaseModel):
@@ -65,6 +90,10 @@ class CollectionChangeResponse(BaseModel):
     job_id: str
     entity_type: str
     entity_id: Optional[int]
+    entity_name: Optional[str] = None  # Entity name for field-level changes OR parent entity for awards/credentials
+    parent_entity_type: Optional[str] = None  # Type of parent entity (for awards/credentials)
+    parent_entity_id: Optional[int] = None  # ID of parent entity (for awards/credentials)
+    associated_communities: Optional[list] = None  # List of community names builder is associated with
     is_new_entity: bool
     field_name: Optional[str]
     old_value: Optional[str]
@@ -73,12 +102,118 @@ class CollectionChangeResponse(BaseModel):
     status: str
     confidence: float
     source_url: Optional[str]
+    proposed_entity_data: Optional[dict]  # Add proposed entity data for new entities
     reviewed_by: Optional[str]
+    reviewed_by_name: Optional[str]  # Full name of reviewer
     reviewed_at: Optional[str]
     created_at: str
 
     class Config:
         from_attributes = True
+
+    @classmethod
+    def from_orm_with_db(cls, obj, db):
+        """Custom from_orm to handle datetime serialization and fetch entity name."""
+        entity_name = None
+        parent_entity_type = None
+        parent_entity_id = None
+        associated_communities = None
+        reviewed_by_name = None
+
+        # Fetch reviewer name if reviewed_by is set
+        if obj.reviewed_by:
+            try:
+                from model.user import Users
+                reviewer = db.query(Users).filter(Users.user_id == obj.reviewed_by).first()
+                if reviewer:
+                    reviewed_by_name = f"{reviewer.first_name} {reviewer.last_name}"
+            except Exception as e:
+                logger.warning(f"Failed to fetch reviewer name for user_id {obj.reviewed_by}: {e}")
+
+        # Handle awards and credentials - fetch parent entity info
+        if obj.entity_type in ("award", "credential") and obj.is_new_entity and obj.proposed_entity_data:
+            try:
+                # Check for builder_id or community_id in proposed_entity_data
+                builder_id = obj.proposed_entity_data.get("builder_id")
+                community_id = obj.proposed_entity_data.get("community_id")
+
+                if builder_id:
+                    from model.profiles.builder import BuilderProfile
+                    builder = db.query(BuilderProfile).filter(BuilderProfile.id == builder_id).first()
+                    if builder:
+                        entity_name = builder.name
+                        parent_entity_type = "builder"
+                        parent_entity_id = builder_id
+                elif community_id:
+                    from model.profiles.community import Community
+                    community = db.query(Community).filter(Community.id == community_id).first()
+                    if community:
+                        entity_name = community.name
+                        parent_entity_type = "community"
+                        parent_entity_id = community_id
+            except Exception as e:
+                logger.warning(f"Failed to fetch parent entity for {obj.entity_type}: {e}")
+
+        # Handle field-level changes - fetch entity name and communities for builders
+        elif not obj.is_new_entity and obj.entity_id:
+            try:
+                if obj.entity_type == "community":
+                    from model.profiles.community import Community
+                    entity = db.query(Community).filter(Community.id == obj.entity_id).first()
+                    if entity:
+                        entity_name = entity.name
+                elif obj.entity_type == "builder":
+                    from model.profiles.builder import BuilderProfile
+                    from sqlalchemy import text
+                    entity = db.query(BuilderProfile).filter(BuilderProfile.id == obj.entity_id).first()
+                    if entity:
+                        entity_name = entity.name
+                        # Fetch associated communities for this builder
+                        try:
+                            community_result = db.execute(text("""
+                                SELECT c.name
+                                FROM builder_communities bc
+                                JOIN communities c ON bc.community_id = c.id
+                                WHERE bc.builder_id = :builder_id
+                                ORDER BY c.name
+                                LIMIT 10
+                            """), {"builder_id": obj.entity_id}).fetchall()
+                            if community_result:
+                                associated_communities = [row[0] for row in community_result]
+                        except Exception as comm_err:
+                            logger.warning(f"Failed to fetch communities for builder {obj.entity_id}: {comm_err}")
+                elif obj.entity_type == "property":
+                    from model.profiles.property import Property
+                    entity = db.query(Property).filter(Property.id == obj.entity_id).first()
+                    if entity:
+                        entity_name = entity.title or entity.address
+            except Exception as e:
+                logger.warning(f"Failed to fetch entity name for {obj.entity_type} {obj.entity_id}: {e}")
+
+        data = {
+            'id': obj.id,
+            'job_id': obj.job_id,
+            'entity_type': obj.entity_type,
+            'entity_id': obj.entity_id,
+            'entity_name': entity_name,
+            'parent_entity_type': parent_entity_type,
+            'parent_entity_id': parent_entity_id,
+            'associated_communities': associated_communities,
+            'is_new_entity': obj.is_new_entity,
+            'field_name': obj.field_name,
+            'old_value': obj.old_value,
+            'new_value': obj.new_value,
+            'change_type': obj.change_type,
+            'status': obj.status,
+            'confidence': obj.confidence,
+            'source_url': obj.source_url,
+            'proposed_entity_data': obj.proposed_entity_data,
+            'reviewed_by': obj.reviewed_by,
+            'reviewed_by_name': reviewed_by_name,
+            'reviewed_at': obj.reviewed_at.isoformat() if obj.reviewed_at else None,
+            'created_at': obj.created_at.isoformat() if obj.created_at else None,
+        }
+        return cls(**data)
 
 
 class ChangeReviewRequest(BaseModel):
@@ -131,12 +266,30 @@ async def create_collection_job(
     Creates a job to collect data for a specific entity type.
     """
     try:
+        # Validate request based on job type
+        if request.job_type == "discovery":
+            # For discovery jobs:
+            # - search_query is optional (blank = search all in location)
+            # - location is required when search_query is blank
+            if not request.search_query and not request.location:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Either search_query or location is required for discovery jobs"
+                )
+        elif request.job_type == "update":
+            # For update jobs, entity_id is required
+            if not request.entity_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="entity_id is required for update jobs"
+                )
+
         # Route to appropriate job creator
         if request.entity_type == "community":
             job = create_community_collection_job(
                 db=db,
                 community_id=request.entity_id,
-                community_name=request.search_query,
+                community_name=request.search_query or None,  # None if blank
                 location=request.location,
                 # initiated_by=current_user.user_id
             )
@@ -144,7 +297,7 @@ async def create_collection_job(
             job = create_builder_collection_job(
                 db=db,
                 builder_id=request.entity_id,
-                builder_name=request.search_query,
+                builder_name=request.search_query or None,  # None if blank
                 community_id=request.community_id,
                 location=request.location,
                 # initiated_by=current_user.user_id
@@ -295,6 +448,96 @@ async def get_collection_job(
     return CollectionJobResponse.from_orm(job)
 
 
+@router.get("/jobs/{job_id}/logs")
+async def get_job_logs(
+    job_id: str,
+    limit: int = Query(100, le=500, description="Max number of logs to return"),
+    offset: int = Query(0, description="Offset for pagination"),
+    level: Optional[str] = Query(None, description="Filter by log level (DEBUG, INFO, SUCCESS, WARNING, ERROR)"),
+    stage: Optional[str] = Query(None, description="Filter by stage"),
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Get execution logs for a collection job.
+
+    Returns detailed real-time logs from job execution stored in the database.
+    Logs are written by collectors during execution and can be polled for live updates.
+    """
+    # Verify job exists
+    job = db.query(CollectionJob).filter(
+        CollectionJob.job_id == job_id
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Query logs from database
+    query = db.query(CollectionJobLog).filter(
+        CollectionJobLog.job_id == job_id
+    )
+
+    # Apply filters
+    if level:
+        query = query.filter(CollectionJobLog.level == level.upper())
+    if stage:
+        query = query.filter(CollectionJobLog.stage == stage)
+
+    # Get total count before pagination
+    total_logs = query.count()
+
+    # Get logs ordered by timestamp (newest first for live updates, or oldest first for full history)
+    logs = query.order_by(
+        CollectionJobLog.timestamp.asc()  # Chronological order
+    ).limit(limit).offset(offset).all()
+
+    # Format logs for response
+    formatted_logs = []
+    for log in logs:
+        formatted_logs.append({
+            "id": log.id,
+            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+            "level": log.level,
+            "message": log.message,
+            "stage": log.stage,
+            "log_data": log.log_data  # Additional structured data
+        })
+
+    return {
+        "job_id": job_id,
+        "logs": formatted_logs,
+        "total_logs": total_logs,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@router.get("/jobs/{job_id}/changes", response_model=List[CollectionChangeResponse])
+async def get_job_changes(
+    job_id: str,
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Get all changes detected by a specific collection job.
+
+    Returns changes (new entities, updates) found during this job's execution.
+    """
+    # Verify job exists
+    job = db.query(CollectionJob).filter(CollectionJob.job_id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Get all changes for this job
+    changes = db.query(CollectionChange).filter(
+        CollectionChange.job_id == job_id
+    ).order_by(CollectionChange.created_at.desc()).all()
+
+    logger.info(f"Found {len(changes)} changes for job {job_id}")
+
+    return [CollectionChangeResponse.from_orm_with_db(change, db) for change in changes]
+
+
 @router.post("/jobs/{job_id}/execute")
 async def execute_collection_job(
     job_id: str,
@@ -322,25 +565,248 @@ async def execute_collection_job(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/jobs/execute-pending")
-async def execute_pending_jobs(
-    limit: int = Query(10, le=50, description="Max jobs to execute"),
+@router.post("/jobs/{job_id}/start", response_model=CollectionJobResponse)
+async def start_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     # current_user = Depends(get_current_admin_user)
 ):
     """
-    Execute pending jobs in priority order.
+    Start a pending collection job immediately.
 
-    Processes multiple pending jobs in batch.
+    This endpoint allows you to manually start a specific pending job.
+    The job will run in the background and you can poll for status updates.
+
+    Only works for jobs with status 'pending'. Returns 400 if job is already running or completed.
     """
     try:
-        executor = JobExecutor(db)
-        executor.execute_pending_jobs(limit=limit)
+        job = db.query(CollectionJob).filter(
+            CollectionJob.job_id == job_id
+        ).first()
 
-        return {"message": f"Executed up to {limit} pending jobs"}
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Check job status
+        if job.status != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot start job with status '{job.status}'. Only pending jobs can be started."
+            )
+
+        # Mark as running immediately
+        job.status = "running"
+        job.started_at = datetime.utcnow()
+        db.commit()
+
+        logger.info(f"⏳ Starting job {job_id} in background")
+
+        # Execute job in background thread
+        def execute_job_background():
+            """Execute job in background with proper error handling"""
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            from config.settings import DB_URL
+
+            # Create new DB session for background thread
+            engine = create_engine(DB_URL, pool_pre_ping=True)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+            bg_db = SessionLocal()
+
+            try:
+                executor = JobExecutor(bg_db)
+                logger.info(f"🔵 Executing job {job_id} in background")
+                executor.execute_job(job_id)
+                logger.info(f"✅ Job {job_id} completed successfully")
+            except Exception as e:
+                error_message = str(e)
+                logger.error(f"❌ Job {job_id} failed: {error_message}", exc_info=True)
+
+                # Mark job as failed in database
+                try:
+                    failed_job = bg_db.query(CollectionJob).filter(
+                        CollectionJob.job_id == job_id
+                    ).first()
+
+                    if failed_job and failed_job.status == "running":
+                        failed_job.status = "failed"
+                        failed_job.error_message = f"Execution failed: {error_message}"
+                        failed_job.completed_at = datetime.utcnow()
+                        bg_db.commit()
+                        logger.info(f"🔧 Marked job {job_id} as failed in database")
+                except Exception as db_err:
+                    logger.error(f"Failed to update job status for {job_id}: {db_err}")
+                    bg_db.rollback()
+            finally:
+                bg_db.close()
+                logger.info(f"🏁 Background thread finished for job {job_id}")
+
+        # Use threading to execute in background
+        import threading
+        thread = threading.Thread(target=execute_job_background)
+        thread.daemon = True
+        thread.start()
+
+        # Refresh job to get updated data
+        db.refresh(job)
+
+        return CollectionJobResponse.from_orm(job)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start job {job_id}: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Cancel and delete a collection job.
+
+    Deletes the job and all associated changes. Works for any job status except 'running'.
+    """
+    try:
+        job = db.query(CollectionJob).filter(
+            CollectionJob.job_id == job_id
+        ).first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Don't allow deleting currently running jobs (could cause issues)
+        if job.status == "running":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete running job. Wait for it to complete or fail first."
+            )
+
+        # Delete associated changes first (foreign key constraint)
+        changes_deleted = db.query(CollectionChange).filter(
+            CollectionChange.job_id == job_id
+        ).delete()
+
+        # Delete the job
+        db.delete(job)
+        db.commit()
+
+        logger.info(f"Job {job_id} deleted successfully (status was '{job.status}', deleted {changes_deleted} associated changes)")
+        return {"success": True, "message": f"Job {job_id} deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to cancel job {job_id}: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/{job_id}/retry", response_model=CollectionJobResponse)
+async def retry_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Retry a failed or cancelled collection job.
+
+    Resets the job status to 'pending' so it can be re-executed.
+    """
+    try:
+        job = db.query(CollectionJob).filter(
+            CollectionJob.job_id == job_id
+        ).first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Only allow retrying failed or cancelled jobs
+        if job.status not in ("failed", "cancelled"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot retry job with status '{job.status}'. Only failed or cancelled jobs can be retried."
+            )
+
+        # Reset job status
+        job.status = "pending"
+        job.error_message = None
+        job.started_at = None
+        job.completed_at = None
+
+        db.commit()
+        db.refresh(job)
+
+        logger.info(f"Job {job_id} reset to pending for retry")
+        return CollectionJobResponse.from_orm(job)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retry job {job_id}: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/reset-stuck")
+async def reset_stuck_jobs(
+    timeout_minutes: int = Query(30, description="Consider jobs stuck after this many minutes"),
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Reset jobs that have been running for too long (stuck jobs).
+
+    Finds all jobs in 'running' status that started more than timeout_minutes ago
+    and resets them to 'failed' with an error message.
+    """
+    try:
+        from datetime import timedelta
+
+        cutoff_time = datetime.utcnow() - timedelta(minutes=timeout_minutes)
+
+        # Find stuck jobs
+        stuck_jobs = db.query(CollectionJob).filter(
+            CollectionJob.status == "running",
+            CollectionJob.started_at < cutoff_time
+        ).all()
+
+        if not stuck_jobs:
+            return {
+                "success": True,
+                "reset_count": 0,
+                "message": f"No jobs have been running for more than {timeout_minutes} minutes"
+            }
+
+        reset_count = 0
+        job_ids = []
+
+        for job in stuck_jobs:
+            job.status = "failed"
+            job.error_message = f"Job timed out after running for more than {timeout_minutes} minutes. Background execution may have failed."
+            job.completed_at = datetime.utcnow()
+            job_ids.append(job.job_id)
+            reset_count += 1
+
+        db.commit()
+
+        logger.info(f"Reset {reset_count} stuck jobs: {', '.join(job_ids)}")
+
+        return {
+            "success": True,
+            "reset_count": reset_count,
+            "job_ids": job_ids,
+            "message": f"Reset {reset_count} stuck job(s) that were running for more than {timeout_minutes} minutes"
+        }
 
     except Exception as e:
-        logger.error(f"Failed to execute pending jobs: {str(e)}", exc_info=True)
+        logger.error(f"Failed to reset stuck jobs: {str(e)}", exc_info=True)
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -353,6 +819,7 @@ async def list_changes(
     status: Optional[str] = Query(None, description="Filter by status (pending, approved, rejected)"),
     entity_type: Optional[str] = Query(None, description="Filter by entity type"),
     is_new_entity: Optional[bool] = Query(None, description="Filter by new entity flag"),
+    reviewed_by: Optional[str] = Query(None, description="Filter by reviewer user_id"),
     limit: int = Query(50, le=100),
     offset: int = Query(0),
     db: Session = Depends(get_db),
@@ -371,12 +838,145 @@ async def list_changes(
         query = query.filter(CollectionChange.entity_type == entity_type)
     if is_new_entity is not None:
         query = query.filter(CollectionChange.is_new_entity == is_new_entity)
+    if reviewed_by:
+        query = query.filter(CollectionChange.reviewed_by == reviewed_by)
 
     changes = query.order_by(
         CollectionChange.created_at.desc()
     ).limit(limit).offset(offset).all()
 
-    return [CollectionChangeResponse.from_orm(change) for change in changes]
+    return [CollectionChangeResponse.from_orm_with_db(change, db) for change in changes]
+
+
+def _cascade_reject_community_changes(
+    db: Session,
+    community_id: Optional[int],
+    community_job_id: Optional[str],
+    reviewed_by: Optional[str]
+) -> int:
+    """
+    Cascade rejection to all pending changes associated with a community.
+
+    When a community change is rejected:
+    1. Find all pending builder changes in that community
+    2. Find all pending property changes in that community
+    3. Auto-reject those changes with cascading note
+    4. Cancel pending jobs spawned from the community job
+
+    Args:
+        db: Database session
+        community_id: Community entity ID (if existing community)
+        community_job_id: Job ID that created the community (for new communities)
+        reviewed_by: User ID who triggered the cascade
+
+    Returns:
+        Number of cascaded rejections
+    """
+    cascaded_count = 0
+
+    # Case 1: Existing community - reject by entity_id relationship
+    if community_id:
+        # Find all pending builder changes where builder is in this community
+        # We need to check builder_communities table to find associated builders
+        from model.profiles.builder import Builder, builder_communities
+        from model.profiles.property import Property
+
+        # Get all builders in this community
+        builder_ids = db.query(builder_communities.c.builder_id).filter(
+            builder_communities.c.community_id == community_id
+        ).all()
+        builder_ids = [b[0] for b in builder_ids]
+
+        # Reject pending builder changes for builders in this community
+        if builder_ids:
+            pending_builder_changes = db.query(CollectionChange).filter(
+                CollectionChange.entity_type == "builder",
+                CollectionChange.entity_id.in_(builder_ids),
+                CollectionChange.status == "pending"
+            ).all()
+
+            for change in pending_builder_changes:
+                change.status = "rejected"
+                change.reviewed_by = reviewed_by
+                change.reviewed_at = datetime.utcnow()
+                change.review_notes = f"Auto-rejected: Associated community (ID: {community_id}) was denied"
+                cascaded_count += 1
+                logger.info(f"Cascaded rejection to builder change {change.id} (builder {change.entity_id})")
+
+        # Get all properties in this community
+        property_ids = db.query(Property.id).filter(
+            Property.community_id == community_id
+        ).all()
+        property_ids = [p[0] for p in property_ids]
+
+        # Reject pending property changes for properties in this community
+        if property_ids:
+            pending_property_changes = db.query(CollectionChange).filter(
+                CollectionChange.entity_type == "property",
+                CollectionChange.entity_id.in_(property_ids),
+                CollectionChange.status == "pending"
+            ).all()
+
+            for change in pending_property_changes:
+                change.status = "rejected"
+                change.reviewed_by = reviewed_by
+                change.reviewed_at = datetime.utcnow()
+                change.review_notes = f"Auto-rejected: Associated community (ID: {community_id}) was denied"
+                cascaded_count += 1
+                logger.info(f"Cascaded rejection to property change {change.id} (property {change.entity_id})")
+
+    # Case 2: New community - reject by job hierarchy
+    if community_job_id:
+        # Find all changes from jobs that have this community job as parent
+        pending_child_changes = db.query(CollectionChange).join(
+            CollectionJob, CollectionChange.job_id == CollectionJob.job_id
+        ).filter(
+            CollectionJob.parent_entity_type == "community",
+            CollectionJob.job_id != community_job_id,  # Don't reject the community change itself
+            CollectionChange.status == "pending"
+        ).all()
+
+        # We need to check if the parent job matches our community job
+        # Get the community job to check its entity_id or as a direct parent
+        for change in pending_child_changes:
+            child_job = db.query(CollectionJob).filter(
+                CollectionJob.job_id == change.job_id
+            ).first()
+
+            # Check if this job's parent is our rejected community job
+            if child_job:
+                # For new communities, check if parent job matches
+                parent_job = db.query(CollectionJob).filter(
+                    CollectionJob.job_id == community_job_id
+                ).first()
+
+                if parent_job and child_job.parent_entity_type == "community":
+                    # Check if they're related through job hierarchy
+                    # This is a simplified check - for new entities we match by parent entity type
+                    if change.entity_type in ["builder", "property"]:
+                        change.status = "rejected"
+                        change.reviewed_by = reviewed_by
+                        change.reviewed_at = datetime.utcnow()
+                        change.review_notes = f"Auto-rejected: Parent community from job {community_job_id} was denied"
+                        cascaded_count += 1
+                        logger.info(f"Cascaded rejection to {change.entity_type} change {change.id} from job {change.job_id}")
+
+        # Cancel pending jobs that have this community job as parent
+        pending_child_jobs = db.query(CollectionJob).filter(
+            CollectionJob.parent_entity_type == "community",
+            CollectionJob.status == "pending"
+        ).all()
+
+        for job in pending_child_jobs:
+            # For new communities, we'd need a parent_job_id field to make this more precise
+            # For now, we'll be conservative and not auto-cancel jobs without clear parent linkage
+            logger.info(f"Found potential child job {job.job_id} but need parent_job_id for safe cancellation")
+
+    if cascaded_count > 0:
+        db.commit()
+        logger.info(f"Cascaded {cascaded_count} rejections from community denial (community_id={community_id}, job_id={community_job_id})")
+
+    return cascaded_count
 
 
 @router.post("/changes/{change_id}/review")
@@ -390,6 +990,8 @@ async def review_change(
     Review a detected change.
 
     Admin can approve or reject the change.
+    If approved and is_new_entity=True, creates the entity in the database.
+    If rejecting a community, cascades rejection to associated builders/properties.
     """
     change = db.query(CollectionChange).filter(
         CollectionChange.id == change_id
@@ -407,11 +1009,71 @@ async def review_change(
     change.reviewed_at = datetime.utcnow()
     change.review_notes = request.notes
 
+    # If rejecting a community, cascade the rejection to associated builders/properties
+    cascaded_count = 0
+    if request.action == "reject" and change.entity_type == "community":
+        cascaded_count = _cascade_reject_community_changes(
+            db=db,
+            community_id=change.entity_id,  # Will be None for new communities
+            community_job_id=change.job_id,  # Job that found this community
+            reviewed_by=change.reviewed_by  # Pass through the reviewer
+        )
+        logger.info(f"Rejected community change {change_id}, cascaded {cascaded_count} related changes")
+
+    # If approved and is a new entity, create it
+    if request.action == "approve" and change.is_new_entity and change.proposed_entity_data:
+        try:
+            if change.entity_type == "community":
+                from model.profiles.community import Community
+                import uuid
+
+                data = change.proposed_entity_data
+                community = Community(
+                    community_id=f"CMY-{uuid.uuid4().hex[:8].upper()}",
+                    name=data.get("name"),
+                    city=data.get("city"),
+                    state=data.get("state"),
+                    postal_code=data.get("zip_code"),
+                    address=data.get("location"),
+                    latitude=data.get("latitude"),
+                    longitude=data.get("longitude"),
+                    about=data.get("description"),
+                    homes=data.get("homes", 0),
+                    residents=data.get("total_residents", 0) if data.get("total_residents") else 0,
+                    founded_year=data.get("year_established"),
+                    total_acres=data.get("total_acres"),
+                    development_stage=data.get("development_stage"),
+                    community_dues=str(data.get("hoa_fee")) if data.get("hoa_fee") else None,
+                    monthly_fee=str(data.get("monthly_fee")) if data.get("monthly_fee") else None,
+                    tax_rate=data.get("tax_rate"),
+                    community_website_url=data.get("website"),
+                    is_verified=False  # Collected communities start as unverified
+                )
+                db.add(community)
+
+                # Update the change with the new entity_id
+                db.flush()  # Get the ID
+                change.entity_id = community.id
+
+                logger.info(f"Created new community {community.community_id} from change {change_id}")
+
+            # Add support for other entity types here (builder, property, etc.)
+
+        except Exception as e:
+            logger.error(f"Failed to create entity from change {change_id}: {e}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Failed to create entity: {str(e)}")
+
     db.commit()
 
     logger.info(f"Change {change_id} {request.action}d by admin")
 
-    return {"message": f"Change {request.action}d successfully"}
+    # Build response message
+    message = f"Change {request.action}d successfully"
+    if cascaded_count > 0:
+        message += f" (cascaded to {cascaded_count} related change{'s' if cascaded_count != 1 else ''})"
+
+    return {"message": message, "cascaded_changes": cascaded_count if cascaded_count > 0 else None}
 
 
 @router.post("/changes/review-bulk")
@@ -496,3 +1158,136 @@ async def get_change_stats(
             result["total_pending"] += count
 
     return result
+
+
+@router.post("/jobs/execute-pending")
+async def execute_pending_jobs(
+    limit: int = Query(1, ge=1, le=1, description="Max number of jobs to execute (set to 1 for sequential execution)"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Execute pending collection jobs asynchronously (one at a time).
+
+    Starts ONE pending job in the background and returns immediately.
+    Jobs execute in priority order (highest priority first).
+    Use GET /jobs/{job_id} to check status.
+
+    NOTE: Only one job runs at a time to prevent resource conflicts.
+    """
+    try:
+        # Check if any job is currently running
+        running_jobs = db.query(CollectionJob).filter(
+            CollectionJob.status == "running"
+        ).count()
+
+        if running_jobs > 0:
+            return {
+                "total_pending": db.query(CollectionJob).filter(
+                    CollectionJob.status == "pending"
+                ).count(),
+                "started": 0,
+                "job_ids": [],
+                "message": f"Cannot start new job: {running_jobs} job(s) already running. Only one job can run at a time."
+            }
+
+        # Get next pending job (only one)
+        pending_jobs = db.query(CollectionJob).filter(
+            CollectionJob.status == "pending"
+        ).order_by(
+            CollectionJob.priority.desc(),
+            CollectionJob.created_at.asc()
+        ).limit(1).all()
+
+        if not pending_jobs:
+            return {
+                "total_pending": 0,
+                "started": 0,
+                "job_ids": [],
+                "message": "No pending jobs to execute"
+            }
+
+        job_ids = []
+
+        # Start single job in background
+        for job in pending_jobs:
+            job_id = job.job_id
+            job_ids.append(job_id)
+
+            # Mark as running immediately
+            job.status = "running"
+            job.started_at = datetime.utcnow()
+
+            logger.info(f"⏳ Starting background execution for job {job_id} (sequential mode)")
+
+        db.commit()
+
+        # Execute jobs in background (after response is sent)
+        def execute_jobs_background():
+            """Execute jobs in background thread with proper error handling"""
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            from config.settings import DB_URL
+
+            # Create new DB session for background thread
+            engine = create_engine(DB_URL, pool_pre_ping=True)
+            SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+            bg_db = SessionLocal()
+
+            try:
+                executor = JobExecutor(bg_db)
+                for job_id in job_ids:
+                    job_failed = False
+                    error_message = None
+
+                    try:
+                        logger.info(f"🔵 Executing job {job_id} in background")
+                        executor.execute_job(job_id)
+                        logger.info(f"✅ Job {job_id} completed successfully")
+                    except Exception as e:
+                        job_failed = True
+                        error_message = str(e)
+                        logger.error(f"❌ Background job {job_id} failed: {error_message}", exc_info=True)
+
+                        # Mark job as failed in database
+                        try:
+                            failed_job = bg_db.query(CollectionJob).filter(
+                                CollectionJob.job_id == job_id
+                            ).first()
+
+                            if failed_job and failed_job.status == "running":
+                                failed_job.status = "failed"
+                                failed_job.error_message = f"Background execution failed: {error_message}"
+                                failed_job.completed_at = datetime.utcnow()
+                                bg_db.commit()
+                                logger.info(f"🔧 Marked job {job_id} as failed in database")
+                        except Exception as db_err:
+                            logger.error(f"Failed to update job status for {job_id}: {db_err}")
+                            bg_db.rollback()
+            except Exception as thread_err:
+                logger.error(f"❌ Background thread crashed: {str(thread_err)}", exc_info=True)
+            finally:
+                bg_db.close()
+                logger.info(f"🏁 Background thread finished processing {len(job_ids)} job(s)")
+
+        # Use threading to execute in background
+        import threading
+        thread = threading.Thread(target=execute_jobs_background)
+        thread.daemon = True
+        thread.start()
+
+        total_pending = db.query(CollectionJob).filter(
+            CollectionJob.status == "pending"
+        ).count()
+
+        return {
+            "total_pending": total_pending,
+            "started": len(job_ids),
+            "job_ids": job_ids,
+            "message": f"Started job {job_ids[0]} in background (sequential mode: 1 job at a time). {total_pending} job(s) remaining in queue. Poll /jobs/{{job_id}} for status."
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start pending jobs: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

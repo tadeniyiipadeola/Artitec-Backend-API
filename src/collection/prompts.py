@@ -6,10 +6,21 @@ Contains all prompts used for different collection tasks.
 from typing import Optional
 
 
-def generate_community_collection_prompt(community_name: str, location: str) -> str:
+def generate_community_collection_prompt(community_name: Optional[str], location: str) -> str:
     """Generate prompt for collecting community data."""
-    return f"""
-Search the web for information about the residential community "{community_name}" in {location}.
+
+    # If no specific community name, do area discovery
+    if not community_name:
+        return f"""
+Search the web for ACTIVELY DEVELOPING residential communities in {location}.
+
+IMPORTANT SEARCH FOCUS:
+- Prioritize communities that are "actively being developed" or "under development"
+- Focus on MASTER-PLANNED COMMUNITIES (communities with comprehensive planning, multiple phases, extensive amenities)
+- EXCLUDE communities that are "completed", "sold out", or "fully built out"
+- Look for communities with ongoing construction and available inventory
+
+Find as many ACTIVE, DEVELOPING residential communities as possible. For EACH community found, extract the following information.
 
 Extract ALL available information about this community. Be thorough and capture every detail you can find.
 
@@ -20,33 +31,174 @@ Extract ALL available information about this community. Be thorough and capture 
    - Description (detailed overview)
    - Location (full address if available)
    - City, State, ZIP code
+   - Latitude and Longitude (coordinates)
    - Website URL
    - Phone number
    - Email
 
-2. HOA INFORMATION
-   - HOA fee (monthly/yearly)
+2. PROPERTY DETAILS
+   - Total acres (size of community)
+   - Sales office address (or welcome center address)
+   - Development stage (Planning, Under Development, Active, Sold Out, Completed)
+   - Total number of homes (or planned homes)
+   - Total residents (current population if available)
+   - Year established/founded or year development started
+   - Is this a master-planned community? (yes/no - look for comprehensive planning, multiple phases, extensive amenities)
+   - Current development status (active development, nearing completion, completed, etc.)
+
+3. FINANCIAL INFORMATION
+   - HOA fee (monthly amount)
+   - HOA fee frequency (monthly/yearly)
+   - Monthly fee (if different from HOA)
+   - Tax rate (property tax rate for the area)
+   - What HOA covers
    - HOA management company
    - HOA contact phone
    - HOA contact email
-   - What HOA covers
 
-3. COMMUNITY DETAILS
-   - Total number of homes
-   - Year established
+4. DEVELOPER & BUILDER
    - Developer name
-   - School district
-   - Zoned schools (elementary, middle, high school names)
-
-4. AMENITIES
-   - List all amenities (pool, clubhouse, trails, parks, etc.)
-   - Amenity details and hours
-
-5. BUILDERS
    - List of builders operating in this community
    - Builder names and contact info
 
-6. REVIEWS & RATINGS
+5. SCHOOLS & EDUCATION
+   - School district
+   - Elementary school name
+   - Middle school name
+   - High school name
+
+6. AMENITIES
+   - List all amenities (pool, clubhouse, trails, parks, etc.)
+   - Amenity details and hours
+
+7. REVIEWS & RATINGS
+   - Overall community rating
+   - Number of reviews
+   - Common feedback themes
+
+## Output Format:
+Return a JSON object with "communities" array:
+{{
+  "communities": [
+    {{
+      "name": "Community Name",
+      "description": "Detailed description",
+      "location": "Full address",
+      "city": "City",
+      "state": "TX",
+      "zip_code": "75XXX",
+      "latitude": 32.9483,
+      "longitude": -96.7297,
+      "website": "https://...",
+      "phone": "123-456-7890",
+      "email": "email@example.com",
+      "total_acres": 500.0,
+      "sales_office_address": "123 Sales Office Dr",
+      "development_stage": "Active",
+      "total_homes": 500,
+      "total_residents": 1200,
+      "year_established": 2015,
+      "development_start_year": 2015,
+      "is_master_planned": true,
+      "development_status_description": "Active development with ongoing construction",
+      "hoa_fee": 150,
+      "hoa_fee_frequency": "monthly",
+      "monthly_fee": 150,
+      "tax_rate": "2.5%",
+      "hoa_management_company": "Company Name",
+      "hoa_contact_phone": "123-456-7890",
+      "hoa_contact_email": "hoa@example.com",
+      "developer_name": "Developer Name",
+      "school_district": "District Name",
+      "elementary_school": "School Name",
+      "middle_school": "School Name",
+      "high_school": "School Name",
+      "amenities": ["pool", "clubhouse", "trails"],
+      "builders": [
+        {{
+          "name": "Builder Name",
+          "website": "https://...",
+          "phone": "123-456-7890"
+        }}
+      ],
+      "rating": 4.5,
+      "review_count": 100,
+      "confidence": {{
+        "overall": 0.85
+      }},
+      "sources": ["https://source1.com", "https://source2.com"]
+    }}
+  ]
+}}
+
+IMPORTANT:
+- Return multiple communities in the "communities" array
+- Only return data you can verify from web sources
+- Include confidence scores
+- List all source URLs where data was found
+- Aim to find at least 10-20 communities in the area
+"""
+
+    # Specific community search
+    return f"""
+Search the web for information about the residential community "{community_name}" in {location}.
+
+IMPORTANT: Pay special attention to:
+- Whether this is a MASTER-PLANNED COMMUNITY (comprehensive planning, multiple phases, extensive amenities)
+- The current development status (actively developing, nearing completion, completed)
+- When development started (founding year or development start year)
+- Whether the community is still actively selling homes or is sold out/completed
+
+Extract ALL available information about this community. Be thorough and capture every detail you can find.
+
+## Required Information:
+
+1. BASIC INFORMATION
+   - Name (official name)
+   - Description (detailed overview)
+   - Location (full address if available)
+   - City, State, ZIP code
+   - Latitude and Longitude (coordinates)
+   - Website URL
+   - Phone number
+   - Email
+
+2. PROPERTY DETAILS
+   - Total acres (size of community)
+   - Sales office address (or welcome center address)
+   - Development stage (Planning, Under Development, Active, Sold Out, Completed)
+   - Total number of homes (or planned homes)
+   - Total residents (current population if available)
+   - Year established/founded or year development started
+   - Is this a master-planned community? (yes/no - look for comprehensive planning, multiple phases, extensive amenities)
+   - Current development status (active development, nearing completion, completed, etc.)
+
+3. FINANCIAL INFORMATION
+   - HOA fee (monthly amount)
+   - HOA fee frequency (monthly/yearly)
+   - Monthly fee (if different from HOA)
+   - Tax rate (property tax rate for the area)
+   - What HOA covers
+   - HOA management company
+   - HOA contact phone
+   - HOA contact email
+
+4. DEVELOPER & BUILDER
+   - Developer name
+   - List of builders operating in this community
+   - Builder names and contact info
+
+5. SCHOOLS & EDUCATION
+   - School district
+   - Elementary school name
+   - Middle school name
+   - High school name
+
+6. AMENITIES
+   - List all amenities (pool, clubhouse, trails, parks, etc.)
+   - Amenity details and hours
+
+7. REVIEWS & RATINGS
    - Overall community rating
    - Number of reviews
    - Common feedback themes
@@ -60,16 +212,24 @@ Return data as structured JSON:
   "city": "string",
   "state": "string",
   "zip_code": "string",
+  "latitude": number,
+  "longitude": number,
   "website": "string",
   "phone": "string",
   "email": "string",
+  "total_acres": number,
+  "sales_office_address": "string",
+  "development_stage": "string",
+  "total_homes": number,
+  "total_residents": number,
+  "year_established": number,
   "hoa_fee": number,
   "hoa_fee_frequency": "monthly|yearly",
+  "monthly_fee": number,
+  "tax_rate": "string",
   "hoa_management_company": "string",
   "hoa_contact_phone": "string",
   "hoa_contact_email": "string",
-  "total_homes": number,
-  "year_established": number,
   "developer_name": "string",
   "school_district": "string",
   "elementary_school": "string",
@@ -419,4 +579,83 @@ IMPORTANT:
 - List source URL for each property
 - If a field is not found, omit it or set to null
 - Be thorough - buyers need complete information
+"""
+
+
+def generate_sales_rep_collection_prompt(
+    builder_name: str,
+    community_name: Optional[str] = None,
+    location: Optional[str] = None
+) -> str:
+    """Generate prompt for collecting sales representative data."""
+
+    # Build context string
+    context_parts = [builder_name]
+    if community_name:
+        context_parts.append(f"at {community_name}")
+    if location:
+        context_parts.append(f"in {location}")
+
+    context = " ".join(context_parts)
+
+    return f"""
+Search the web for sales representatives working for {context}.
+
+Find ALL sales representatives associated with this builder{' and community' if community_name else ''}. Look for:
+- Builder's official website (sales team page, meet our team, contact us)
+- Community website (if specific community is mentioned)
+- Real estate listings with sales agent information
+- Social media profiles (LinkedIn, Facebook business pages)
+- Online directories and review sites
+
+Extract the following information for EACH sales representative found:
+
+## Required Information:
+
+1. BASIC INFORMATION
+   - Full name
+   - Title/Role (e.g., "Sales Consultant", "New Home Specialist", "Community Sales Manager")
+   - Phone number (direct line if available)
+   - Email address
+   - Photo URL (professional headshot if available)
+
+2. PROFESSIONAL DETAILS
+   - Bio/Description (professional background, experience)
+   - Years of experience (if mentioned)
+   - Specialties or focus areas
+   - Languages spoken (if mentioned)
+   - License information (if mentioned)
+
+3. CONTACT & SOCIAL
+   - LinkedIn profile URL
+   - Office location/address
+   - Availability hours
+
+## Output Format:
+Return a JSON object with "sales_reps" array:
+{{
+  "sales_reps": [
+    {{
+      "name": "Full Name",
+      "title": "Sales Consultant",
+      "phone": "555-123-4567",
+      "email": "email@builder.com",
+      "photo_url": "https://example.com/photo.jpg",
+      "bio": "Professional bio and background information",
+      "confidence": 0.9,
+      "source_url": "https://builder.com/team"
+    }}
+  ],
+  "total_found": number,
+  "sources": ["url1", "url2"]
+}}
+
+IMPORTANT:
+- Find ALL sales representatives, not just featured ones
+- Verify that the rep is associated with {builder_name}{f' at {community_name}' if community_name else ''}
+- Include confidence score (0.0-1.0) for each rep based on source reliability
+- List the source URL where you found each rep's information
+- If a field is not found, omit it or set to null
+- Only include reps that are currently active (not marked as "former" or "previous")
+- Be thorough - complete sales team information is essential
 """

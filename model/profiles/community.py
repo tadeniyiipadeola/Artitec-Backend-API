@@ -55,7 +55,17 @@ class Community(Base):
 
     # Development
     development_stage = Column(String(64))  # Phase 1-5, Completed
+    development_start_year = Column(Integer)  # Year when development started
+    is_master_planned = Column(Boolean, default=False)  # Whether this is a master-planned community
     enterprise_number_hoa = Column(String(255))  # Registration/Enterprise ID
+
+    # Status Management
+    is_active = Column(Boolean, server_default='1', nullable=False)
+    development_status = Column(String(50), server_default='active', nullable=False)  # planned, under_development, active, sold_out, inactive
+    availability_status = Column(String(50), server_default='available', nullable=False)  # available, limited_availability, sold_out, closed
+    last_activity_at = Column(TIMESTAMP)
+    status_changed_at = Column(TIMESTAMP)
+    status_change_reason = Column(String(255))
 
     # Media
     intro_video_url = Column(String(1024))

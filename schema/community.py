@@ -260,6 +260,8 @@ class CommunityBase(BaseModel):
 
     # Development
     development_stage: Optional[constr(strip_whitespace=True, max_length=64)] = None
+    development_start_year: Optional[int] = None
+    is_master_planned: Optional[bool] = False
     enterprise_number_hoa: Optional[constr(strip_whitespace=True, max_length=255)] = None
 
     # Media
@@ -294,6 +296,8 @@ class CommunityUpdate(BaseModel):
     member_count: Optional[int] = None
 
     development_stage: Optional[constr(strip_whitespace=True, max_length=64)] = None
+    development_start_year: Optional[int] = None
+    is_master_planned: Optional[bool] = None
     enterprise_number_hoa: Optional[constr(strip_whitespace=True, max_length=255)] = None
 
     intro_video_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
