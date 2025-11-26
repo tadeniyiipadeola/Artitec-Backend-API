@@ -278,7 +278,10 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Website URL
    - Phone number
    - Email
-   - Headquarters address
+   - Headquarters address (full street address)
+   - City (headquarters city)
+   - State (headquarters state - 2-letter code)
+   - Postal code (ZIP code)
 
 2. COMPANY DETAILS
    - Year founded
@@ -314,6 +317,9 @@ Return data as structured JSON:
   "phone": "string",
   "email": "string",
   "headquarters_address": "string",
+  "city": "string",
+  "state": "string",
+  "postal_code": "string",
   "founded_year": number,
   "employee_count": number,
   "service_areas": ["array", "of", "locations"],
