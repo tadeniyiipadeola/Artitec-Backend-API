@@ -1454,3 +1454,177 @@ async def execute_pending_jobs(
     except Exception as e:
         logger.error(f"Failed to start pending jobs: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ================================================================
+# Data Coverage & Backfill Endpoints
+# ================================================================
+
+@router.get("/coverage/community-builders")
+async def get_community_builder_coverage(
+    db: Session = Depends(get_db)
+):
+    """
+    Get community-builder data coverage statistics.
+
+    Returns information about how many communities have builders linked.
+    """
+    try:
+        from sqlalchemy import text
+
+        # Total communities
+        total_result = db.execute(text("SELECT COUNT(*) FROM communities")).scalar()
+        total_communities = total_result or 0
+
+        # Communities with builders
+        with_builders_result = db.execute(text("""
+            SELECT COUNT(DISTINCT community_id)
+            FROM builder_communities
+        """)).scalar()
+        communities_with_builders = with_builders_result or 0
+
+        # Communities without builders
+        communities_without_builders = total_communities - communities_with_builders
+
+        # Coverage percentage
+        coverage_pct = (communities_with_builders / total_communities * 100) if total_communities > 0 else 0
+
+        # Total associations
+        associations_result = db.execute(text("SELECT COUNT(*) FROM builder_communities")).scalar()
+        total_associations = associations_result or 0
+
+        # Average builders per community (for communities that have builders)
+        avg_builders = (total_associations / communities_with_builders) if communities_with_builders > 0 else 0
+
+        # Get communities without builders (limited to 20)
+        missing_result = db.execute(text("""
+            SELECT c.id, c.name, c.city, c.state
+            FROM communities c
+            LEFT JOIN builder_communities bc ON c.id = bc.community_id
+            WHERE bc.community_id IS NULL
+            ORDER BY c.name
+            LIMIT 20
+        """))
+
+        communities_missing = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "city": row.city,
+                "state": row.state,
+                "location": f"{row.city}, {row.state}" if row.city and row.state else None
+            }
+            for row in missing_result.fetchall()
+        ]
+
+        return {
+            "total_communities": total_communities,
+            "communities_with_builders": communities_with_builders,
+            "communities_without_builders": communities_without_builders,
+            "coverage_percentage": round(coverage_pct, 1),
+            "total_builder_associations": total_associations,
+            "average_builders_per_community": round(avg_builders, 2),
+            "communities_missing_builders": communities_missing
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get coverage stats: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/backfill/community-builders")
+async def backfill_community_builders(
+    priority: int = Query(7, description="Priority for created jobs (1-10)", ge=1, le=10),
+    dry_run: bool = Query(True, description="Preview without creating jobs"),
+    db: Session = Depends(get_db)
+):
+    """
+    Create builder discovery jobs for communities without builders.
+
+    This endpoint implements the backfill functionality to fill data gaps
+    in the cascading collection workflow (communities → builders → properties).
+    """
+    try:
+        from sqlalchemy import text
+
+        # Get communities without builders
+        result = db.execute(text("""
+            SELECT c.id, c.name, c.city, c.state, c.community_id
+            FROM communities c
+            LEFT JOIN builder_communities bc ON c.id = bc.community_id
+            WHERE bc.community_id IS NULL
+            ORDER BY c.name
+        """))
+
+        communities_without_builders = result.fetchall()
+
+        if not communities_without_builders:
+            return {
+                "message": "All communities already have builders linked",
+                "communities_found": 0,
+                "jobs_created": 0,
+                "dry_run": dry_run
+            }
+
+        jobs_preview = []
+        jobs_created = []
+
+        for row in communities_without_builders:
+            location = f"{row.city}, {row.state}" if row.city and row.state else None
+            search_query = f"{row.name} builders"
+            if location:
+                search_query += f" {location}"
+
+            job_data = {
+                "community_id": row.id,
+                "community_name": row.name,
+                "location": location,
+                "search_query": search_query,
+                "priority": priority
+            }
+
+            jobs_preview.append(job_data)
+
+            if not dry_run:
+                # Create the actual job
+                job = CollectionJob(
+                    entity_type="builder",
+                    entity_id=None,
+                    job_type="discovery",
+                    parent_entity_type="community",
+                    parent_entity_id=row.id,
+                    status="pending",
+                    priority=priority,
+                    search_query=search_query,
+                    search_filters={
+                        "community_id": row.id,
+                        "community_name": row.name,
+                        "location": location
+                    },
+                    initiated_by="system_backfill"
+                )
+                db.add(job)
+                jobs_created.append({
+                    "job_id": job.job_id,
+                    "community_name": row.name,
+                    "community_id": row.id
+                })
+
+        if not dry_run:
+            db.commit()
+            logger.info(f"Created {len(jobs_created)} backfill jobs for communities without builders")
+
+        return {
+            "message": f"{'Preview:' if dry_run else 'Created'} {len(jobs_preview)} builder discovery job(s)",
+            "communities_found": len(communities_without_builders),
+            "jobs_created": len(jobs_created) if not dry_run else 0,
+            "dry_run": dry_run,
+            "jobs_preview": jobs_preview if dry_run else None,
+            "jobs": jobs_created if not dry_run else None,
+            "priority": priority
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to backfill community builders: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
