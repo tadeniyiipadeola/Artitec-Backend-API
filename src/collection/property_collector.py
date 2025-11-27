@@ -155,11 +155,33 @@ class PropertyCollector(BaseCollector):
         )
 
         for idx, prop_data in enumerate(properties, 1):
+            # Generate address identifier (for new construction, may be lot number or plan name)
             address = prop_data.get("address")
             if not address:
-                self.log("Skipping property with no address", "WARNING", "matching")
-                logger.warning("Skipping property with no address")
-                continue
+                # Generate placeholder address for new construction
+                lot_number = prop_data.get("lot_number", "")
+                plan_name = prop_data.get("builder_plan_name", prop_data.get("title", ""))
+                if lot_number:
+                    address = f"Lot {lot_number}"
+                elif plan_name:
+                    address = f"{plan_name} (New Construction)"
+                else:
+                    address = "TBD (New Construction)"
+
+                # Ensure we have required location fields from community
+                if not prop_data.get("city"):
+                    prop_data["city"] = self.community.city if self.community and self.community.city else "TBD"
+                if not prop_data.get("state"):
+                    prop_data["state"] = self.community.state if self.community and self.community.state else "TX"
+                if not prop_data.get("zip_code"):
+                    prop_data["zip_code"] = self.community.zip_code if self.community and self.community.zip_code else "00000"
+
+                self.log(
+                    f"Property without street address - using identifier: {address}",
+                    "INFO",
+                    "matching",
+                    {"generated_address": address, "lot_number": lot_number, "plan_name": plan_name}
+                )
 
             self.log(
                 f"Processing property {idx}/{len(properties)}: {address}",
@@ -171,7 +193,7 @@ class PropertyCollector(BaseCollector):
             source_url = prop_data.get("source_url") or (sources[0] if sources else None)
             confidence = prop_data.get("confidence", 0.8)
 
-            # Try to find existing property by address
+            # Try to find existing property by address or other identifiers
             existing_property = self._find_existing_property(address, prop_data)
 
             if existing_property:
@@ -215,7 +237,7 @@ class PropertyCollector(BaseCollector):
         # Try exact address match
         prop = self.db.query(Property).filter(
             Property.builder_id == self.builder.id,
-            Property.address.ilike(address)
+            Property.address1.ilike(address)
         ).first()
 
         if prop:
@@ -230,8 +252,8 @@ class PropertyCollector(BaseCollector):
             prop = self.db.query(Property).filter(
                 Property.builder_id == self.builder.id,
                 Property.city.ilike(city),
-                Property.zip_code == zip_code,
-                Property.address.ilike(f"%{address.split()[0]}%")  # Match street number
+                Property.postal_code == zip_code,
+                Property.address1.ilike(f"%{address.split()[0]}%")  # Match street number
             ).first()
 
             if prop:
@@ -253,16 +275,18 @@ class PropertyCollector(BaseCollector):
             "title": "title",
             "description": "description",
             "property_type": "property_type",
-            "status": "status",
+            "status": "listing_status",
             # Specifications
             "price": "price",
-            "beds": "beds",
-            "baths": "baths",
+            "beds": "bedrooms",
+            "baths": "bathrooms",
             "sqft": "sqft",
-            "lot_size": "lot_size",
+            "lot_size": "lot_sqft",
+            "year_built": "year_built",
             "stories": "stories",
             "garage_spaces": "garage_spaces",
             # Lot details
+            "lot_number": "lot_number",
             "corner_lot": "corner_lot",
             "cul_de_sac": "cul_de_sac",
             "lot_backing": "lot_backing",
@@ -339,22 +363,24 @@ class PropertyCollector(BaseCollector):
             "community_id": self.community.id if self.community else None,
             # Basic info
             "title": prop_data.get("title"),
-            "address": address,
+            "address1": address,
             "city": prop_data.get("city"),
             "state": prop_data.get("state"),
-            "zip_code": prop_data.get("zip_code"),
+            "postal_code": prop_data.get("zip_code"),
             "description": prop_data.get("description"),
             "property_type": prop_data.get("property_type"),
-            "status": prop_data.get("status", "available"),
+            "listing_status": prop_data.get("status", "available"),
             # Specifications
             "price": price,
-            "beds": beds,
-            "baths": baths,
+            "bedrooms": beds,
+            "bathrooms": baths,
             "sqft": prop_data.get("sqft"),
-            "lot_size": prop_data.get("lot_size"),
+            "lot_sqft": prop_data.get("lot_size"),
+            "year_built": prop_data.get("year_built"),
             "stories": prop_data.get("stories"),
             "garage_spaces": prop_data.get("garage_spaces"),
             # Lot details
+            "lot_number": prop_data.get("lot_number"),
             "corner_lot": prop_data.get("corner_lot", False),
             "cul_de_sac": prop_data.get("cul_de_sac", False),
             "lot_backing": prop_data.get("lot_backing"),
@@ -379,7 +405,7 @@ class PropertyCollector(BaseCollector):
             # Media
             "virtual_tour_url": prop_data.get("virtual_tour_url"),
             "floor_plan_url": prop_data.get("floor_plan_url"),
-            "images": prop_data.get("images", [])
+            "media_urls": prop_data.get("images", [])
         }
 
         self.log(

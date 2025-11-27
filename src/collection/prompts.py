@@ -459,10 +459,12 @@ Extract ALL available information for each property. Be thorough and capture eve
    - Bathrooms
    - Square footage
    - Lot size (acres or sq ft)
+   - Year built
    - Stories
    - Garage spaces
 
 3. LOT DETAILS
+   - Lot number (for new construction properties without assigned addresses)
    - Corner lot? (yes/no)
    - Cul-de-sac? (yes/no)
    - Lot backing (greenbelt, pond, street, etc.)
@@ -547,8 +549,10 @@ Return data as structured JSON array:
       "baths": number,
       "sqft": number,
       "lot_size": number,
+      "year_built": number,
       "stories": number,
       "garage_spaces": number,
+      "lot_number": "string",
       "corner_lot": boolean,
       "cul_de_sac": boolean,
       "lot_backing": "string",

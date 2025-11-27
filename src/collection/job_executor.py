@@ -376,37 +376,43 @@ def create_builder_collection_job(
 
 def create_property_inventory_job(
     db: Session,
-    builder_id: int,
-    community_id: int,
+    builder_id: Optional[int] = None,
+    community_id: Optional[int] = None,
     location: Optional[str] = None,
-    initiated_by: Optional[str] = None
+    initiated_by: Optional[str] = None,
+    priority: int = 3
 ) -> CollectionJob:
     """
     Create a property inventory collection job.
 
     Args:
         db: Database session
-        builder_id: Builder ID
-        community_id: Community ID
+        builder_id: Builder ID (optional for bulk discovery)
+        community_id: Community ID (optional for bulk discovery)
         location: Location string
         initiated_by: User ID who initiated the job
+        priority: Job priority (default: 3)
 
     Returns:
         Created CollectionJob
     """
+    search_filters = {}
+    if builder_id:
+        search_filters["builder_id"] = builder_id
+    if community_id:
+        search_filters["community_id"] = community_id
+    if location:
+        search_filters["location"] = location
+
     job = CollectionJob(
         entity_type="property",
         entity_id=None,
         job_type="inventory",
-        parent_entity_type="builder",
+        parent_entity_type="builder" if builder_id else None,
         parent_entity_id=builder_id,
         status="pending",
-        priority=3,
-        search_filters={
-            "builder_id": builder_id,
-            "community_id": community_id,
-            "location": location
-        },
+        priority=priority,
+        search_filters=search_filters if search_filters else None,
         initiated_by=initiated_by
     )
 
@@ -416,3 +422,86 @@ def create_property_inventory_job(
 
     logger.info(f"Created property inventory job: {job.job_id}")
     return job
+
+
+def create_bulk_property_discovery_jobs(
+    db: Session,
+    priority: int = 5,
+    initiated_by: Optional[str] = None
+) -> Dict:
+    """
+    Create property inventory jobs for all community-builder pairs in the database.
+
+    This fetches all communities with their linked builders and creates a separate
+    property collection job for each builder-community combination.
+
+    Args:
+        db: Database session
+        priority: Priority for created jobs (default: 5)
+        initiated_by: User ID who initiated the job
+
+    Returns:
+        Dictionary containing:
+            - jobs_created: Number of jobs created
+            - communities_processed: Number of communities processed
+            - builder_community_pairs: Total builder-community combinations found
+            - job_ids: List of created job IDs
+    """
+    from model.profiles.community import Community
+    from model.profiles.builder import BuilderProfile, builder_communities
+
+    # Query all communities with their builders
+    communities_with_builders = db.query(Community).join(
+        builder_communities,
+        Community.id == builder_communities.c.community_id
+    ).join(
+        BuilderProfile,
+        BuilderProfile.id == builder_communities.c.builder_id
+    ).all()
+
+    job_ids = []
+    builder_community_pairs = 0
+    communities_processed = set()
+
+    for community in communities_with_builders:
+        communities_processed.add(community.id)
+
+        # Get all builders for this community
+        builders = db.query(BuilderProfile).join(
+            builder_communities,
+            BuilderProfile.id == builder_communities.c.builder_id
+        ).filter(
+            builder_communities.c.community_id == community.id
+        ).all()
+
+        for builder in builders:
+            builder_community_pairs += 1
+
+            # Create property inventory job for this builder-community pair
+            job = create_property_inventory_job(
+                db=db,
+                builder_id=builder.id,
+                community_id=community.id,
+                location=f"{community.city}, {community.state}" if community.city and community.state else None,
+                initiated_by=initiated_by,
+                priority=priority
+            )
+            job_ids.append(job.job_id)
+
+            logger.info(
+                f"Created property job for builder '{builder.name}' "
+                f"in community '{community.name}' (Job: {job.job_id})"
+            )
+
+    logger.info(
+        f"Bulk property discovery complete: Created {len(job_ids)} jobs "
+        f"for {len(communities_processed)} communities "
+        f"({builder_community_pairs} builder-community pairs)"
+    )
+
+    return {
+        "jobs_created": len(job_ids),
+        "communities_processed": len(communities_processed),
+        "builder_community_pairs": builder_community_pairs,
+        "job_ids": job_ids
+    }

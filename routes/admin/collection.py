@@ -11,16 +11,75 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from config.db import get_db
 from model.collection import CollectionJob, CollectionChange, EntityMatch, CollectionJobLog
+from model.property.property import Property
 from src.collection.job_executor import (
     JobExecutor,
     create_community_collection_job,
     create_builder_collection_job,
-    create_property_inventory_job
+    create_property_inventory_job,
+    create_bulk_property_discovery_jobs
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/collection", tags=["Admin - Data Collection"])
+
+
+# ===================================================================
+# Helper Functions
+# ===================================================================
+
+def enrich_job_with_property_data(job, db: Session):
+    """Enrich job object with property details if entity_type is property."""
+    if job.entity_type == "property":
+        # First try to get property data if entity_id is set (completed jobs)
+        if job.entity_id:
+            property_obj = db.query(Property).filter(Property.id == job.entity_id).first()
+            if property_obj:
+                job.property_title = property_obj.title
+                job.property_description = property_obj.description
+                job.property_community_id = property_obj.community_id
+                job.property_builder_id = property_obj.builder_id
+                job.property_move_in_date = property_obj.move_in_date
+                job.property_builder_plan_name = property_obj.builder_plan_name
+                return job
+
+        # If no entity_id, try to get builder/community info from search_filters
+        if job.search_filters:
+            import json
+            try:
+                filters = json.loads(job.search_filters) if isinstance(job.search_filters, str) else job.search_filters
+                builder_id = filters.get('builder_id')
+                community_id = filters.get('community_id')
+
+                # Get builder name
+                if builder_id:
+                    from model.profiles.builder import BuilderProfile
+                    builder = db.query(BuilderProfile).filter(BuilderProfile.id == builder_id).first()
+                    if builder:
+                        job.property_builder_id = builder_id
+                        job.property_builder_name = builder.name
+
+                # Get community name - use as the main title
+                if community_id:
+                    from model.profiles.community import Community
+                    community = db.query(Community).filter(Community.id == community_id).first()
+                    if community:
+                        job.property_community_id = community_id
+                        job.property_community_name = community.name
+                        job.property_title = community.name
+
+                        # Add community location to location field
+                        location_parts = [community.city, community.state]
+                        location_str = ", ".join([p for p in location_parts if p])
+                        if location_str:
+                            job.location = location_str
+            except Exception as e:
+                # If JSON parsing fails or query fails, log and skip enrichment
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to enrich property job {job.job_id}: {e}", exc_info=True)
+    return job
 
 
 # ===================================================================
@@ -48,6 +107,7 @@ class CollectionJobResponse(BaseModel):
     status: str
     priority: int
     search_query: Optional[str]
+    search_filters: Optional[dict] = None
     items_found: int
     changes_detected: int
     new_entities_found: int
@@ -55,6 +115,16 @@ class CollectionJobResponse(BaseModel):
     created_at: str
     started_at: Optional[str]
     completed_at: Optional[str]
+
+    # Property details (for property jobs)
+    property_title: Optional[str] = None
+    property_description: Optional[str] = None
+    property_community_id: Optional[int] = None
+    property_community_name: Optional[str] = None
+    property_builder_id: Optional[int] = None
+    property_builder_name: Optional[str] = None
+    property_move_in_date: Optional[str] = None
+    property_builder_plan_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -73,6 +143,7 @@ class CollectionJobResponse(BaseModel):
             'status': obj.status,
             'priority': obj.priority,
             'search_query': obj.search_query,
+            'search_filters': obj.search_filters,
             'items_found': obj.items_found or 0,
             'changes_detected': obj.changes_detected or 0,
             'new_entities_found': obj.new_entities_found or 0,
@@ -80,6 +151,14 @@ class CollectionJobResponse(BaseModel):
             'created_at': obj.created_at.isoformat() if obj.created_at else None,
             'started_at': obj.started_at.isoformat() if obj.started_at else None,
             'completed_at': obj.completed_at.isoformat() if obj.completed_at else None,
+            'property_title': getattr(obj, 'property_title', None),
+            'property_description': getattr(obj, 'property_description', None),
+            'property_community_id': getattr(obj, 'property_community_id', None),
+            'property_community_name': getattr(obj, 'property_community_name', None),
+            'property_builder_id': getattr(obj, 'property_builder_id', None),
+            'property_builder_name': getattr(obj, 'property_builder_name', None),
+            'property_move_in_date': getattr(obj, 'property_move_in_date', None),
+            'property_builder_plan_name': getattr(obj, 'property_builder_plan_name', None),
         }
         return cls(**data)
 
@@ -267,8 +346,8 @@ async def create_collection_job(
     """
     try:
         # Validate request based on job type
-        if request.job_type == "discovery":
-            # For discovery jobs:
+        if request.job_type == "discovery" and request.entity_type != "property":
+            # For discovery jobs (except property jobs which use existing communities):
             # - search_query is optional (blank = search all in location)
             # - location is required when search_query is blank
             if not request.search_query and not request.location:
@@ -303,17 +382,40 @@ async def create_collection_job(
                 # initiated_by=current_user.user_id
             )
         elif request.entity_type == "property":
-            if not request.builder_id or not request.community_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="builder_id and community_id required for property collection"
+            # For discovery jobs without specific IDs, create bulk jobs for all communities
+            if request.job_type == "discovery" and not request.builder_id and not request.community_id:
+                # Bulk property discovery: Create jobs for all builder-community pairs
+                result = create_bulk_property_discovery_jobs(
+                    db=db,
+                    priority=request.priority or 5,
+                    # initiated_by=current_user.user_id
                 )
+
+                # Return summary response instead of single job
+                return {
+                    "message": f"Created {result['jobs_created']} property inventory jobs",
+                    "jobs_created": result['jobs_created'],
+                    "communities_processed": result['communities_processed'],
+                    "builder_community_pairs": result['builder_community_pairs'],
+                    "job_ids": result['job_ids'][:10]  # Return first 10 job IDs
+                }
+
+            # For non-discovery property jobs, require builder_id and community_id
+            if request.job_type != "discovery":
+                if not request.builder_id or not request.community_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="builder_id and community_id required for property inventory/update jobs"
+                    )
+
+            # Single property inventory job (specific builder + community)
             job = create_property_inventory_job(
                 db=db,
                 builder_id=request.builder_id,
                 community_id=request.community_id,
                 location=request.location,
-                # initiated_by=current_user.user_id
+                priority=request.priority or 3,
+                #initiated_by=current_user.user_id
             )
         else:
             raise HTTPException(
@@ -360,8 +462,11 @@ async def list_collection_jobs(
         CollectionJob.created_at.desc()
     ).limit(page_size).offset(offset).all()
 
+    # Enrich jobs with property data where applicable
+    enriched_jobs = [enrich_job_with_property_data(job, db) for job in jobs]
+
     return CollectionJobListResponse(
-        jobs=[CollectionJobResponse.from_orm(job) for job in jobs],
+        jobs=[CollectionJobResponse.from_orm(job) for job in enriched_jobs],
         total=total,
         page=page,
         page_size=page_size
@@ -444,6 +549,9 @@ async def get_collection_job(
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Enrich with property data if applicable
+    job = enrich_job_with_property_data(job, db)
 
     return CollectionJobResponse.from_orm(job)
 
@@ -1220,7 +1328,139 @@ async def review_change(
 
                 logger.info(f"Created new builder {builder.builder_id} from change {change_id}")
 
-            # Add support for other entity types here (property, etc.)
+            elif change.entity_type == "property":
+                from model.property.property import Property
+
+                data = change.proposed_entity_data
+
+                # CRITICAL VALIDATION: Ensure builder_id and community_id are provided
+                builder_id = data.get("builder_id")
+                community_id = data.get("community_id")
+
+                if not builder_id or not community_id:
+                    # Reject the change - missing required relationships
+                    change.status = "rejected"
+                    change.review_notes = f"Property missing required relationships: builder_id={builder_id}, community_id={community_id}. Properties MUST have both builder and community associations. {request.notes or ''}"
+                    db.commit()
+
+                    logger.error(
+                        f"Blocked property creation during approval - Change {change_id} missing required foreign keys "
+                        f"(builder_id: {builder_id}, community_id: {community_id})"
+                    )
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Property validation failed: must have both builder_id and community_id"
+                    )
+
+                # Verify builder and community exist in database
+                from model.profiles.builder import BuilderProfile
+                from model.profiles.community import Community
+
+                builder = db.query(BuilderProfile).filter(BuilderProfile.id == builder_id).first()
+                community = db.query(Community).filter(Community.id == community_id).first()
+
+                if not builder:
+                    change.status = "rejected"
+                    change.review_notes = f"Builder ID {builder_id} not found in database. {request.notes or ''}"
+                    db.commit()
+
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Builder ID {builder_id} does not exist"
+                    )
+
+                if not community:
+                    change.status = "rejected"
+                    change.review_notes = f"Community ID {community_id} not found in database. {request.notes or ''}"
+                    db.commit()
+
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Community ID {community_id} does not exist"
+                    )
+
+                # Create the property with validated relationships
+                property = Property(
+                    # REQUIRED foreign keys - enforced at approval
+                    builder_id=builder_id,
+                    community_id=community_id,
+
+                    # Basic info
+                    title=data.get("title", "Untitled Property"),
+                    description=data.get("description"),
+
+                    # Address
+                    address1=data.get("address1") or "Address TBD",
+                    city=data.get("city", ""),
+                    state=data.get("state", ""),
+                    postal_code=data.get("postal_code", ""),
+                    latitude=data.get("latitude"),
+                    longitude=data.get("longitude"),
+
+                    # Required fields with defaults
+                    price=data.get("price") or 0,
+                    bedrooms=data.get("bedrooms") or 0,
+                    bathrooms=data.get("bathrooms") or 0,
+
+                    # Specifications
+                    sqft=data.get("sqft"),
+                    lot_sqft=data.get("lot_sqft"),
+                    year_built=data.get("year_built"),
+                    property_type=data.get("property_type"),
+                    listing_status=data.get("listing_status", "available"),
+                    stories=data.get("stories"),
+                    garage_spaces=data.get("garage_spaces"),
+
+                    # Lot details
+                    lot_number=data.get("lot_number"),
+                    corner_lot=data.get("corner_lot", False),
+                    cul_de_sac=data.get("cul_de_sac", False),
+                    lot_backing=data.get("lot_backing"),
+
+                    # Schools
+                    school_district=data.get("school_district"),
+                    elementary_school=data.get("elementary_school"),
+                    middle_school=data.get("middle_school"),
+                    high_school=data.get("high_school"),
+                    school_ratings=data.get("school_ratings"),
+
+                    # Builder-specific
+                    model_home=data.get("model_home", False),
+                    quick_move_in=data.get("quick_move_in", False),
+                    construction_stage=data.get("construction_stage"),
+                    estimated_completion=data.get("estimated_completion"),
+                    builder_plan_name=data.get("builder_plan_name"),
+
+                    # Pricing
+                    price_per_sqft=data.get("price_per_sqft"),
+                    days_on_market=data.get("days_on_market"),
+                    builder_incentives=data.get("builder_incentives"),
+                    upgrades_included=data.get("upgrades_included"),
+                    upgrades_value=data.get("upgrades_value"),
+
+                    # Media
+                    virtual_tour_url=data.get("virtual_tour_url"),
+                    floor_plan_url=data.get("floor_plan_url"),
+                    media_urls=data.get("media_urls", []),
+
+                    # Collection metadata
+                    source_url=data.get("source_url"),
+                    data_confidence=data.get("confidence", 0.8)
+                )
+
+                db.add(property)
+
+                # Update the change with the new entity_id
+                db.flush()  # Get the ID
+                change.entity_id = property.id
+
+                logger.info(
+                    f"Created new property {property.id} from change {change_id} "
+                    f"(builder_id: {builder_id}, community_id: {community_id}, address: {property.address1})"
+                )
+
+            # Add support for other entity types here
 
         except Exception as e:
             logger.error(f"Failed to create entity from change {change_id}: {e}")
@@ -1496,12 +1736,15 @@ async def get_community_builder_coverage(
         # Average builders per community (for communities that have builders)
         avg_builders = (total_associations / communities_with_builders) if communities_with_builders > 0 else 0
 
-        # Get communities without builders (limited to 20)
+        # Get communities without builders (limited to 20) with property counts
         missing_result = db.execute(text("""
-            SELECT c.id, c.name, c.city, c.state
+            SELECT c.id, c.name, c.city, c.state,
+                   COUNT(p.id) as property_count
             FROM communities c
             LEFT JOIN builder_communities bc ON c.id = bc.community_id
+            LEFT JOIN properties p ON c.id = p.community_id
             WHERE bc.community_id IS NULL
+            GROUP BY c.id, c.name, c.city, c.state
             ORDER BY c.name
             LIMIT 20
         """))
@@ -1512,7 +1755,8 @@ async def get_community_builder_coverage(
                 "name": row.name,
                 "city": row.city,
                 "state": row.state,
-                "location": f"{row.city}, {row.state}" if row.city and row.state else None
+                "location": f"{row.city}, {row.state}" if row.city and row.state else None,
+                "property_count": row.property_count
             }
             for row in missing_result.fetchall()
         ]
@@ -1627,4 +1871,118 @@ async def backfill_community_builders(
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to backfill community builders: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(
+    job_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a single collection job by ID.
+
+    **Warning**: This will permanently delete the job and its associated logs.
+    """
+    try:
+        # Find the job
+        job = db.query(CollectionJob).filter(CollectionJob.job_id == job_id).first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Delete associated logs first
+        db.query(CollectionJobLog).filter(CollectionJobLog.job_id == job_id).delete()
+
+        # Delete the job
+        db.delete(job)
+        db.commit()
+
+        logger.info(f"Deleted job {job_id}")
+
+        return {
+            "message": f"Successfully deleted job {job_id}",
+            "job_id": job_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete job {job_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/jobs")
+async def delete_jobs_bulk(
+    entity_type: Optional[str] = Query(None, description="Filter by entity type"),
+    job_type: Optional[str] = Query(None, description="Filter by job type"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    delete_all: bool = Query(False, description="Delete all matching jobs (not just page)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk delete collection jobs matching the specified filters.
+
+    This endpoint allows deleting all jobs that match the given criteria.
+    Can filter by entity_type, job_type, and status.
+
+    **Warning**: This will permanently delete jobs and their associated logs.
+    Use with caution!
+    """
+    try:
+        # Build the query with filters
+        query = db.query(CollectionJob)
+
+        if entity_type:
+            query = query.filter(CollectionJob.entity_type == entity_type)
+
+        if job_type:
+            query = query.filter(CollectionJob.job_type == job_type)
+
+        if status:
+            query = query.filter(CollectionJob.status == status)
+
+        # Count jobs that will be deleted
+        total_count = query.count()
+
+        if total_count == 0:
+            return {
+                "message": "No jobs found matching the specified filters",
+                "deleted_count": 0,
+                "filters": {
+                    "entity_type": entity_type,
+                    "job_type": job_type,
+                    "status": status
+                }
+            }
+
+        # Get job IDs for logging
+        job_ids = [job.job_id for job in query.all()]
+
+        # Delete associated logs first (due to foreign key constraints)
+        for job_id in job_ids:
+            db.query(CollectionJobLog).filter(CollectionJobLog.job_id == job_id).delete()
+
+        # Delete the jobs
+        deleted_count = query.delete(synchronize_session=False)
+
+        db.commit()
+
+        logger.info(f"Bulk deleted {deleted_count} jobs with filters: entity_type={entity_type}, job_type={job_type}, status={status}")
+
+        return {
+            "message": f"Successfully deleted {deleted_count} job(s)",
+            "deleted_count": deleted_count,
+            "filters": {
+                "entity_type": entity_type,
+                "job_type": job_type,
+                "status": status
+            },
+            "job_ids": job_ids[:100]  # Return first 100 job IDs for reference
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to bulk delete jobs: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

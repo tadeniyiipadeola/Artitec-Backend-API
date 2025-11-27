@@ -3,7 +3,7 @@ from sqlalchemy import (
     Column, String, Integer, Float, Text, JSON, TIMESTAMP, ForeignKey, Numeric, Boolean
 )
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
 
 from model.base import Base
@@ -55,6 +55,7 @@ class Property(Base):
     garage_spaces = Column(Integer, nullable=True)
 
     # Lot characteristics
+    lot_number = Column(String(64), nullable=True)  # Lot number for new construction
     corner_lot = Column(Boolean, default=False, nullable=True)
     cul_de_sac = Column(Boolean, default=False, nullable=True)
     lot_backing = Column(String(128), nullable=True)  # greenbelt, pond, street, etc.
@@ -124,8 +125,11 @@ class Property(Base):
     data_confidence = Column(Float, nullable=True)
 
     # Associations / flags
-    builder_id = Column(MyBIGINT(unsigned=True), ForeignKey("builder_profiles.id", ondelete="SET NULL"), nullable=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="SET NULL"), nullable=True)
+    # REQUIRED foreign keys - Properties MUST belong to a builder and community
+    # Using RESTRICT to prevent accidental deletion of builders/communities with properties
+    # Changed from BIGINT to Integer to match builder_profiles.id and communities.id types
+    builder_id = Column(Integer, ForeignKey("builder_profiles.id", ondelete="RESTRICT"), nullable=False)
+    community_id = Column(Integer, ForeignKey("communities.id", ondelete="RESTRICT"), nullable=False)
     has_pool = Column(Boolean, default=False)  # Legacy field, use pool_type instead
 
     # Media (store as JSON array of URLs)
@@ -154,6 +158,36 @@ class Property(Base):
     primary_builder = relationship("BuilderProfile", foreign_keys=[builder_id], lazy="selectin", viewonly=True)
     community = relationship("Community", foreign_keys=[community_id], lazy="selectin", viewonly=True)
 
+    @validates('builder_id')
+    def validate_builder_id(self, key, value):
+        """
+        Validate that builder_id is provided and is not None.
+
+        This validator provides runtime validation beyond the database constraint.
+        Properties MUST belong to a builder from BuilderProfile table.
+        """
+        if value is None:
+            raise ValueError(
+                "Property must have a builder_id. "
+                "Properties can only be created for builders in the BuilderProfile table."
+            )
+        return value
+
+    @validates('community_id')
+    def validate_community_id(self, key, value):
+        """
+        Validate that community_id is provided and is not None.
+
+        This validator provides runtime validation beyond the database constraint.
+        Properties MUST belong to a community.
+        """
+        if value is None:
+            raise ValueError(
+                "Property must have a community_id. "
+                "Properties must be associated with a community."
+            )
+        return value
+
     def __repr__(self):
         return f"<Property(title='{self.title}', city='{self.city}', price={self.price})>"
 
@@ -163,8 +197,8 @@ class FavoriteProperty(Base):
     __tablename__ = "favorite_properties"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    property_id = Column(MyBIGINT(unsigned=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
 
