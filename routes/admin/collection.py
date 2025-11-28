@@ -173,6 +173,8 @@ class CollectionChangeResponse(BaseModel):
     parent_entity_type: Optional[str] = None  # Type of parent entity (for awards/credentials)
     parent_entity_id: Optional[int] = None  # ID of parent entity (for awards/credentials)
     associated_communities: Optional[list] = None  # List of community names builder is associated with
+    property_bedrooms: Optional[int] = None  # For property entities - bedroom count
+    property_bathrooms: Optional[float] = None  # For property entities - bathroom count
     is_new_entity: bool
     field_name: Optional[str]
     old_value: Optional[str]
@@ -198,6 +200,8 @@ class CollectionChangeResponse(BaseModel):
         parent_entity_id = None
         associated_communities = None
         reviewed_by_name = None
+        property_bedrooms = None
+        property_bathrooms = None
 
         # Fetch reviewer name if reviewed_by is set
         if obj.reviewed_by:
@@ -209,8 +213,17 @@ class CollectionChangeResponse(BaseModel):
             except Exception as e:
                 logger.warning(f"Failed to fetch reviewer name for user_id {obj.reviewed_by}: {e}")
 
+        # Handle new properties - extract title, bedrooms, and bathrooms from proposed_entity_data
+        if obj.entity_type == "property" and obj.is_new_entity and obj.proposed_entity_data:
+            try:
+                entity_name = obj.proposed_entity_data.get("title") or obj.proposed_entity_data.get("address1") or "Unknown Property"
+                property_bedrooms = obj.proposed_entity_data.get("bedrooms")
+                property_bathrooms = obj.proposed_entity_data.get("bathrooms")
+            except Exception as e:
+                logger.warning(f"Failed to extract property display info: {e}")
+
         # Handle awards and credentials - fetch parent entity info
-        if obj.entity_type in ("award", "credential") and obj.is_new_entity and obj.proposed_entity_data:
+        elif obj.entity_type in ("award", "credential") and obj.is_new_entity and obj.proposed_entity_data:
             try:
                 # Check for builder_id or community_id in proposed_entity_data
                 builder_id = obj.proposed_entity_data.get("builder_id")
@@ -278,6 +291,8 @@ class CollectionChangeResponse(BaseModel):
             'parent_entity_type': parent_entity_type,
             'parent_entity_id': parent_entity_id,
             'associated_communities': associated_communities,
+            'property_bedrooms': property_bedrooms,
+            'property_bathrooms': property_bathrooms,
             'is_new_entity': obj.is_new_entity,
             'field_name': obj.field_name,
             'old_value': obj.old_value,
@@ -1380,11 +1395,48 @@ async def review_change(
                         detail=f"Community ID {community_id} does not exist"
                     )
 
+                # VALIDATION: Ensure minimum required fields for manual approval
+                price = data.get("price") or 0
+                bedrooms = data.get("bedrooms") or 0
+                bathrooms = data.get("bathrooms") or 0
+
+                if price <= 0:
+                    change.status = "rejected"
+                    change.review_notes = f"Invalid price ({price}). Price must be greater than 0. {request.notes or ''}"
+                    db.commit()
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Property validation failed: price must be > 0 (got {price})"
+                    )
+
+                if bedrooms < 1:
+                    change.status = "rejected"
+                    change.review_notes = f"Invalid bedrooms ({bedrooms}). Must have at least 1 bedroom. {request.notes or ''}"
+                    db.commit()
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Property validation failed: must have at least 1 bedroom (got {bedrooms})"
+                    )
+
+                if bathrooms < 1:
+                    change.status = "rejected"
+                    change.review_notes = f"Invalid bathrooms ({bathrooms}). Must have at least 1 bathroom. {request.notes or ''}"
+                    db.commit()
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Property validation failed: must have at least 1 bathroom (got {bathrooms})"
+                    )
+
                 # Create the property with validated relationships
                 property = Property(
                     # REQUIRED foreign keys - enforced at approval
                     builder_id=builder_id,
+                    builder_id_string=data.get("builder_id_string"),
                     community_id=community_id,
+                    community_id_string=data.get("community_id_string"),
 
                     # Basic info
                     title=data.get("title", "Untitled Property"),
@@ -1399,7 +1451,7 @@ async def review_change(
                     longitude=data.get("longitude"),
 
                     # Required fields with defaults
-                    price=data.get("price") or 0,
+                    price=price,
                     bedrooms=data.get("bedrooms") or 0,
                     bathrooms=data.get("bathrooms") or 0,
 
@@ -1446,7 +1498,11 @@ async def review_change(
 
                     # Collection metadata
                     source_url=data.get("source_url"),
-                    data_confidence=data.get("confidence", 0.8)
+                    data_confidence=data.get("confidence", 0.8),
+
+                    # Approval metadata - manually approved
+                    approved_at=datetime.utcnow(),
+                    approved_by_user_id=None  # TODO: Enable when current_user is available
                 )
 
                 db.add(property)
@@ -1985,4 +2041,296 @@ async def delete_jobs_bulk(
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to bulk delete jobs: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===================================================================
+# Audit Log Endpoints
+# ===================================================================
+
+class AuditLogEntryResponse(BaseModel):
+    """Response for a single audit log entry."""
+    id: int
+    timestamp: str
+    action: str  # "approved", "rejected", "auto_approved", "auto_denied"
+    entity_type: str  # "property", "builder", "community"
+    entity_name: str
+    property_address: Optional[str] = None
+    property_bedrooms: Optional[int] = None
+    property_bathrooms: Optional[float] = None
+    property_price: Optional[float] = None
+    reviewer_name: Optional[str] = None
+    reviewer_id: Optional[str] = None
+    review_notes: Optional[str] = None
+    confidence: float
+    change_type: str  # "added", "modified", "removed"
+    is_auto_action: bool
+    source_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AuditLogStatsResponse(BaseModel):
+    """Statistics for audit log."""
+    total_actions: int
+    auto_approved: int
+    auto_denied: int
+    manually_approved: int
+    manually_rejected: int
+    pending_review: int
+    properties_added: int
+    properties_updated: int
+    last_7_days: int
+    last_30_days: int
+
+
+@router.get("/audit-logs", response_model=List[AuditLogEntryResponse])
+async def get_audit_logs(
+    action: Optional[str] = Query(None, description="Filter by action (approved, rejected, auto_approved, auto_denied)"),
+    entity_type: Optional[str] = Query(None, description="Filter by entity type (property, builder, community)"),
+    reviewer_id: Optional[str] = Query(None, description="Filter by reviewer user ID"),
+    days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of entries to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Get audit logs for property approval/denial activities.
+
+    Returns a paginated list of all approval/denial actions taken on properties,
+    including both manual and automatic decisions.
+    """
+    try:
+        from datetime import timedelta
+
+        # Query collection changes that have been reviewed
+        query = db.query(CollectionChange).filter(
+            CollectionChange.reviewed_at.isnot(None)
+        )
+
+        # Apply filters
+        if action:
+            if action == "auto_approved":
+                query = query.filter(
+                    CollectionChange.status == "approved",
+                    CollectionChange.reviewed_by.is_(None)  # Auto-approved have no reviewer
+                )
+            elif action == "auto_denied":
+                query = query.filter(
+                    CollectionChange.status == "rejected",
+                    CollectionChange.reviewed_by.is_(None)
+                )
+            elif action == "approved":
+                query = query.filter(
+                    CollectionChange.status == "approved",
+                    CollectionChange.reviewed_by.isnot(None)  # Manual approval has reviewer
+                )
+            elif action == "rejected":
+                query = query.filter(
+                    CollectionChange.status == "rejected",
+                    CollectionChange.reviewed_by.isnot(None)
+                )
+
+        if entity_type:
+            query = query.filter(CollectionChange.entity_type == entity_type)
+
+        if reviewer_id:
+            query = query.filter(CollectionChange.reviewed_by == reviewer_id)
+
+        # Filter by date range
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        query = query.filter(CollectionChange.reviewed_at >= cutoff_date)
+
+        # Order by most recent first
+        query = query.order_by(CollectionChange.reviewed_at.desc())
+
+        # Apply pagination
+        changes = query.limit(limit).offset(offset).all()
+
+        # Format response
+        audit_entries = []
+        for change in changes:
+            # Determine action type
+            if change.status == "approved":
+                action_type = "auto_approved" if not change.reviewed_by else "approved"
+            else:
+                action_type = "auto_denied" if not change.reviewed_by else "rejected"
+
+            # Get entity name
+            entity_name = "Unknown"
+            property_address = None
+            property_bedrooms = None
+            property_bathrooms = None
+            property_price = None
+
+            if change.is_new_entity and change.proposed_entity_data:
+                data = change.proposed_entity_data
+                if change.entity_type == "property":
+                    entity_name = data.get("title") or data.get("address1") or "Untitled Property"
+                    property_address = data.get("address1")
+                    property_bedrooms = data.get("bedrooms")
+                    property_bathrooms = data.get("bathrooms")
+                    property_price = data.get("price")
+                elif change.entity_type == "builder":
+                    entity_name = data.get("name", "Unknown Builder")
+                elif change.entity_type == "community":
+                    entity_name = data.get("name", "Unknown Community")
+            elif change.entity_id:
+                # Fetch entity name from database
+                try:
+                    if change.entity_type == "property":
+                        from model.property.property import Property
+                        prop = db.query(Property).filter(Property.id == change.entity_id).first()
+                        if prop:
+                            entity_name = prop.title or prop.address1
+                            property_address = prop.address1
+                            property_bedrooms = prop.bedrooms
+                            property_bathrooms = prop.bathrooms
+                            property_price = float(prop.price) if prop.price else None
+                    elif change.entity_type == "builder":
+                        from model.profiles.builder import BuilderProfile
+                        builder = db.query(BuilderProfile).filter(BuilderProfile.id == change.entity_id).first()
+                        if builder:
+                            entity_name = builder.name
+                    elif change.entity_type == "community":
+                        from model.profiles.community import Community
+                        community = db.query(Community).filter(Community.id == change.entity_id).first()
+                        if community:
+                            entity_name = community.name
+                except Exception as e:
+                    logger.warning(f"Failed to fetch entity name for {change.entity_type} {change.entity_id}: {e}")
+
+            # Get reviewer name
+            reviewer_name = None
+            if change.reviewed_by:
+                try:
+                    from model.user import Users
+                    reviewer = db.query(Users).filter(Users.user_id == change.reviewed_by).first()
+                    if reviewer:
+                        reviewer_name = f"{reviewer.first_name} {reviewer.last_name}"
+                except Exception as e:
+                    logger.warning(f"Failed to fetch reviewer name for {change.reviewed_by}: {e}")
+
+            audit_entries.append(AuditLogEntryResponse(
+                id=change.id,
+                timestamp=change.reviewed_at.isoformat() if change.reviewed_at else None,
+                action=action_type,
+                entity_type=change.entity_type,
+                entity_name=entity_name,
+                property_address=property_address,
+                property_bedrooms=property_bedrooms,
+                property_bathrooms=property_bathrooms,
+                property_price=property_price,
+                reviewer_name=reviewer_name,
+                reviewer_id=change.reviewed_by,
+                review_notes=change.review_notes,
+                confidence=change.confidence,
+                change_type=change.change_type,
+                is_auto_action=not bool(change.reviewed_by),
+                source_url=change.source_url
+            ))
+
+        return audit_entries
+
+    except Exception as e:
+        logger.error(f"Failed to fetch audit logs: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/audit-logs/stats", response_model=AuditLogStatsResponse)
+async def get_audit_log_stats(
+    days: int = Query(30, ge=1, le=365, description="Number of days to calculate stats for"),
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Get statistics about property approval/denial activities.
+
+    Returns counts of different types of actions taken.
+    """
+    try:
+        from datetime import timedelta
+        from sqlalchemy import func
+
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_7_days = datetime.utcnow() - timedelta(days=7)
+
+        # Total actions
+        total_actions = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.reviewed_at.isnot(None),
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Auto-approved (approved + no reviewer)
+        auto_approved = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.status == "approved",
+            CollectionChange.reviewed_by.is_(None),
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Auto-denied (rejected + no reviewer)
+        auto_denied = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.status == "rejected",
+            CollectionChange.reviewed_by.is_(None),
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Manually approved (approved + has reviewer)
+        manually_approved = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.status == "approved",
+            CollectionChange.reviewed_by.isnot(None),
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Manually rejected (rejected + has reviewer)
+        manually_rejected = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.status == "rejected",
+            CollectionChange.reviewed_by.isnot(None),
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Pending review
+        pending_review = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.status == "pending"
+        ).scalar() or 0
+
+        # Properties added (new entities that were approved)
+        properties_added = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.entity_type == "property",
+            CollectionChange.is_new_entity == True,
+            CollectionChange.status == "approved",
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Properties updated (field changes that were approved)
+        properties_updated = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.entity_type == "property",
+            CollectionChange.is_new_entity == False,
+            CollectionChange.status == "approved",
+            CollectionChange.reviewed_at >= cutoff_date
+        ).scalar() or 0
+
+        # Last 7 days activity
+        last_7_days = db.query(func.count(CollectionChange.id)).filter(
+            CollectionChange.reviewed_at.isnot(None),
+            CollectionChange.reviewed_at >= cutoff_7_days
+        ).scalar() or 0
+
+        return AuditLogStatsResponse(
+            total_actions=total_actions,
+            auto_approved=auto_approved,
+            auto_denied=auto_denied,
+            manually_approved=manually_approved,
+            manually_rejected=manually_rejected,
+            pending_review=pending_review,
+            properties_added=properties_added,
+            properties_updated=properties_updated,
+            last_7_days=last_7_days,
+            last_30_days=total_actions
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to fetch audit log stats: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

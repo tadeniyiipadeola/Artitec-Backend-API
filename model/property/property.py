@@ -129,7 +129,9 @@ class Property(Base):
     # Using RESTRICT to prevent accidental deletion of builders/communities with properties
     # Changed from BIGINT to Integer to match builder_profiles.id and communities.id types
     builder_id = Column(Integer, ForeignKey("builder_profiles.id", ondelete="RESTRICT"), nullable=False)
+    builder_id_string = Column(String(50), nullable=True)  # String format builder ID (e.g., "BLD-PSALMSFINE-0420")
     community_id = Column(Integer, ForeignKey("communities.id", ondelete="RESTRICT"), nullable=False)
+    community_id_string = Column(String(64), nullable=True)  # String format community ID (e.g., "CMY-23F55C68")
     has_pool = Column(Boolean, default=False)  # Legacy field, use pool_type instead
 
     # Media (store as JSON array of URLs)
@@ -144,6 +146,8 @@ class Property(Base):
         nullable=False,
     )
     listed_at = Column(TIMESTAMP)
+    approved_at = Column(TIMESTAMP, nullable=True)  # When the property was approved
+    approved_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Admin who approved it
 
     # Relationships
     # Many-to-many with builders via portfolio (collection of builders who built this property)

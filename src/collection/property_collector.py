@@ -12,6 +12,7 @@ from model.profiles.community import Community
 from .base_collector import BaseCollector
 from .prompts import generate_property_collection_prompt
 from .status_management import ImprovedPropertyStatusManager
+from .auto_approval import AutoApprovalService
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class PropertyCollector(BaseCollector):
         self.builder = None
         self.community = None
         self.status_manager = ImprovedPropertyStatusManager(db)
+        self.auto_approval_service = AutoApprovalService(db)
         self._load_context()
 
     def _load_context(self):
@@ -360,7 +362,9 @@ class PropertyCollector(BaseCollector):
         entity_data = {
             # IDs
             "builder_id": self.builder.id,
+            "builder_id_string": self.builder.builder_id if self.builder else None,
             "community_id": self.community.id if self.community else None,
+            "community_id_string": self.community.community_id if self.community else None,
             # Basic info
             "title": prop_data.get("title"),
             "address1": address,
@@ -421,7 +425,8 @@ class PropertyCollector(BaseCollector):
             }
         )
 
-        self.record_change(
+        # Record the change
+        change = self.record_change(
             entity_type="property",
             entity_id=None,
             change_type="added",
@@ -430,6 +435,24 @@ class PropertyCollector(BaseCollector):
             confidence=confidence,
             source_url=source_url
         )
+
+        # Process through auto-approval logic
+        try:
+            approved_property = self.auto_approval_service.process_change(change)
+            if approved_property:
+                self.log(
+                    f"Property AUTO-APPROVED: {address} (ID: {approved_property.id})",
+                    "SUCCESS",
+                    "saving",
+                    {"property_id": approved_property.id, "auto_approved": True}
+                )
+        except Exception as e:
+            self.log(
+                f"Auto-approval failed for {address}: {str(e)}",
+                "WARNING",
+                "saving",
+                {"error": str(e)}
+            )
 
         self.record_entity_match(
             discovered_entity_type="property",
