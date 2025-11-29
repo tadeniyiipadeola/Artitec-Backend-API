@@ -4,6 +4,7 @@ Admin Collection Routes
 API endpoints for managing data collection jobs.
 """
 import logging
+import time
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
@@ -2333,4 +2334,129 @@ async def get_audit_log_stats(
 
     except Exception as e:
         logger.error(f"Failed to fetch audit log stats: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===================================================================
+# Change Reversion
+# ===================================================================
+
+class RevertChangeRequest(BaseModel):
+    """Request model for reverting an auto-applied change."""
+    user_id: str = Field(..., description="User ID performing the reversion")
+    reason: Optional[str] = Field(None, description="Optional reason for reverting")
+
+
+@router.post("/changes/{change_id}/revert", summary="Revert an auto-applied change")
+def revert_change(
+    change_id: int,
+    request: RevertChangeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Revert an auto-applied change back to its original value.
+
+    This endpoint allows reverting changes that were automatically applied
+    by the collection system. It restores the old value and marks the change
+    as reverted with full audit trail.
+
+    Requirements:
+    - Change must have auto_applied = True
+    - Change must have status = 'applied'
+    - Entity must still exist in database
+    """
+    try:
+        # Get the change record
+        change = db.query(CollectionChange).filter(CollectionChange.id == change_id).first()
+
+        if not change:
+            raise HTTPException(status_code=404, detail=f"Change {change_id} not found")
+
+        # Validate that this change can be reverted
+        if not change.auto_applied:
+            raise HTTPException(
+                status_code=400,
+                detail="Only auto-applied changes can be reverted. This change was manually reviewed."
+            )
+
+        if change.status != "applied":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot revert change with status '{change.status}'. Only applied changes can be reverted."
+            )
+
+        if change.reverted_at is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Change was already reverted at {change.reverted_at}"
+            )
+
+        # Get the entity to revert
+        entity_model = None
+        if change.entity_type == "community":
+            from model.profiles.community import Community
+            entity_model = Community
+        elif change.entity_type == "builder":
+            from model.profiles.builder import BuilderProfile
+            entity_model = BuilderProfile
+        elif change.entity_type == "property":
+            from model.property.property import Property
+            entity_model = Property
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported entity type: {change.entity_type}"
+            )
+
+        # Get the entity
+        entity = db.query(entity_model).filter(entity_model.id == change.entity_id).first()
+        if not entity:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{change.entity_type.capitalize()} {change.entity_id} not found"
+            )
+
+        # Revert the change by setting the field back to old_value
+        if change.field_name and hasattr(entity, change.field_name):
+            setattr(entity, change.field_name, change.old_value)
+
+            # Update the change record
+            change.reverted_at = datetime.utcnow()
+            change.reverted_by = request.user_id
+            change.review_notes = (
+                f"Reverted by {request.user_id}. "
+                f"{request.reason if request.reason else 'No reason provided.'}"
+            )
+
+            db.commit()
+
+            logger.info(
+                f"Reverted change {change_id}: {change.entity_type}.{change.field_name} "
+                f"from {change.new_value} back to {change.old_value} "
+                f"(reverted by {request.user_id})"
+            )
+
+            return {
+                "success": True,
+                "change_id": change_id,
+                "entity_type": change.entity_type,
+                "entity_id": change.entity_id,
+                "field_name": change.field_name,
+                "restored_value": change.old_value,
+                "reverted_at": change.reverted_at.isoformat(),
+                "reverted_by": change.reverted_by,
+                "message": f"Successfully reverted {change.field_name} to its original value"
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Field {change.field_name} not found on {change.entity_type}"
+            )
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to revert change {change_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

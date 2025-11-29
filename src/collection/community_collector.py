@@ -534,6 +534,7 @@ class CommunityCollector(BaseCollector):
         Process collected data for existing community.
 
         Detect changes and create CollectionChange records.
+        Auto-applies high-quality changes for safe fields.
         """
         if "raw_response" in collected_data:
             logger.warning("Claude returned non-JSON response")
@@ -550,22 +551,76 @@ class CommunityCollector(BaseCollector):
             collected_data.get("monthly_fee")
         )
 
-        # Map of fields to check
+        # SAFE fields: Can be auto-applied with high confidence (>= 0.85)
+        SAFE_FIELDS = {
+            "phone", "email", "sales_office_address", "elementary_school",
+            "middle_school", "high_school", "developer_name", "enterprise_number_hoa",
+            "intro_video_url", "community_website_url", "latitude", "longitude",
+            "total_acres", "tax_rate", "founded_year", "development_start_year",
+            "is_master_planned", "rating", "review_count"
+        }
+
+        # RISKY fields: Always require manual review
+        RISKY_FIELDS = {"name", "city", "state", "postal_code", "address"}
+
+        # Comprehensive field mapping - covers ALL Community model fields
         field_mapping = {
-            "description": "description",
-            "website": "website",
-            "phone": "phone_number",
+            # Basic Info
+            "name": "name",
+            "city": "city",
+            "state": "state",
+            "postal_code": "postal_code",
+            "address": "address",
+            "phone": "phone",
             "email": "email",
-            "hoa_fee": "hoa_fee",
-            "school_district": "school_district",
+            "sales_office_address": "sales_office_address",
+
+            # Location
+            "total_acres": "total_acres",
+            "latitude": "latitude",
+            "longitude": "longitude",
+
+            # Finance
+            "tax_rate": "tax_rate",
+
+            # Stats
+            "total_homes": "homes",
+            "residents": "residents",
+            "founded_year": "founded_year",
+            "member_count": "member_count",
+
+            # Schools
+            "elementary_school": "elementary_school",
+            "middle_school": "middle_school",
+            "high_school": "high_school",
+
+            # Development
+            "development_start_year": "development_start_year",
+            "is_master_planned": "is_master_planned",
+            "enterprise_number_hoa": "enterprise_number_hoa",
+            "developer_name": "developer_name",
+
+            # Reviews
+            "rating": "rating",
+            "review_count": "review_count",
+
+            # Media
+            "intro_video_url": "intro_video_url",
+            "community_website_url": "community_website_url",
+
+            # Legacy/compatibility mappings
+            "description": "about",
+            "website": "community_website_url",
+            "phone_number": "phone",
             "hoa_management_company": "hoa_management_company",
             "hoa_contact_phone": "hoa_contact_phone",
             "hoa_contact_email": "hoa_contact_email",
-            "total_homes": "homes",
-            "year_established": "year_established",
-            "development_start_year": "development_start_year",
-            "is_master_planned": "is_master_planned"
+            "school_district": "school_district",
+            "year_established": "founded_year",
         }
+
+        changes_detected = 0
+        auto_applied_count = 0
 
         for collected_field, db_field in field_mapping.items():
             if collected_field in collected_data:
@@ -574,7 +629,24 @@ class CommunityCollector(BaseCollector):
 
                 # Check if value changed
                 if new_value != old_value and new_value is not None:
-                    self.record_change(
+                    # Determine if auto-apply is appropriate
+                    should_auto_apply = False
+                    auto_apply_reason = None
+
+                    # Check if field is in SAFE category
+                    if db_field in SAFE_FIELDS and db_field not in RISKY_FIELDS:
+                        if confidence >= 0.85:
+                            if old_value is None or old_value == "":
+                                # Filling empty field with high confidence
+                                should_auto_apply = True
+                                auto_apply_reason = "filling_empty_field"
+                            elif self._is_data_quality_improvement(db_field, old_value, new_value):
+                                # New value is demonstrably better
+                                should_auto_apply = True
+                                auto_apply_reason = "data_quality_improvement"
+
+                    # Record the change
+                    change_record = self.record_change(
                         entity_type="community",
                         entity_id=self.community.id,
                         change_type="modified",
@@ -584,6 +656,33 @@ class CommunityCollector(BaseCollector):
                         confidence=confidence,
                         source_url=source_url
                     )
+
+                    changes_detected += 1
+
+                    # Auto-apply if appropriate
+                    if should_auto_apply and change_record:
+                        try:
+                            # Apply the change to the database
+                            setattr(self.community, db_field, new_value)
+
+                            # Mark as auto-applied
+                            change_record.auto_applied = True
+                            change_record.auto_apply_reason = auto_apply_reason
+                            change_record.status = "applied"
+                            change_record.applied_at = datetime.utcnow()
+
+                            self.db.commit()
+                            auto_applied_count += 1
+
+                            logger.info(
+                                f"Auto-applied change to {db_field}: {old_value} -> {new_value} "
+                                f"(reason: {auto_apply_reason}, confidence: {confidence:.2f})"
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to auto-apply change to {db_field}: {e}")
+                            self.db.rollback()
+                            change_record.auto_applied = False
+                            change_record.status = "pending"
 
         # Check calculated fees
         if community_dues:
@@ -707,17 +806,74 @@ class CommunityCollector(BaseCollector):
                     source_url=source_url
                 )
 
-        # Update data_source and last_data_sync
-        self.record_change(
-            entity_type="community",
-            entity_id=self.community.id,
-            change_type="modified",
-            field_name="data_source",
-            old_value=getattr(self.community, "data_source", "manual"),
-            new_value="collected",
-            confidence=1.0,
-            source_url=source_url
-        )
+        # Update data_source only if other changes were detected
+        # Skip redundant data_source updates when nothing else changed
+        if changes_detected > 0:
+            self.record_change(
+                entity_type="community",
+                entity_id=self.community.id,
+                change_type="modified",
+                field_name="data_source",
+                old_value=getattr(self.community, "data_source", "manual"),
+                new_value="collected",
+                confidence=1.0,
+                source_url=source_url
+            )
+
+        # Log summary
+        if changes_detected > 0:
+            logger.info(
+                f"Update complete: {changes_detected} changes detected, "
+                f"{auto_applied_count} auto-applied, "
+                f"{changes_detected - auto_applied_count} pending review"
+            )
+
+    def _is_data_quality_improvement(self, field_name: str, old_value: Any, new_value: Any) -> bool:
+        """
+        Determine if new_value represents a data quality improvement over old_value.
+
+        Returns True if new value is demonstrably better (more detailed, properly formatted, etc.).
+        """
+        if old_value is None or old_value == "":
+            return True  # Any value is better than empty
+
+        # Convert to strings for comparison
+        old_str = str(old_value).strip()
+        new_str = str(new_value).strip()
+
+        if not new_str:
+            return False  # Empty new value is never better
+
+        # Length/detail comparison - new value significantly longer suggests more detail
+        if len(new_str) > len(old_str) * 1.5:
+            return True
+
+        # Phone number formatting improvements
+        if field_name in ["phone", "hoa_contact_phone"]:
+            # Prefer formatted phone numbers (e.g., "(555) 123-4567" over "5551234567")
+            if len(new_str) > len(old_str) and ("-" in new_str or "(" in new_str):
+                return True
+
+        # URL improvements (http -> https, more complete URLs)
+        if field_name in ["intro_video_url", "community_website_url"]:
+            if new_str.startswith("https://") and old_str.startswith("http://"):
+                return True
+            # Prefer full URLs over partial ones
+            if new_str.count("/") > old_str.count("/"):
+                return True
+
+        # School names - prefer full names over acronyms
+        if field_name in ["elementary_school", "middle_school", "high_school"]:
+            # If new value has more words, it's likely more detailed
+            if len(new_str.split()) > len(old_str.split()):
+                return True
+
+        # Email improvements - prefer complete emails
+        if field_name == "email":
+            if "@" in new_str and "@" not in old_str:
+                return True
+
+        return False
 
     def _process_new_community(self, collected_data: Dict[str, Any]):
         """

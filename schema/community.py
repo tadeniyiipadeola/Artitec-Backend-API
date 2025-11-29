@@ -243,6 +243,22 @@ class CommunityBase(BaseModel):
     state: Optional[constr(strip_whitespace=True, max_length=64)] = None
     postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None
 
+    # Contact Information
+    phone: Optional[constr(strip_whitespace=True, max_length=32)] = None
+    email: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    sales_office_address: Optional[constr(strip_whitespace=True, max_length=512)] = None
+
+    # Schools
+    school_district: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    elementary_school: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    middle_school: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    high_school: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
+    # HOA Management (existing fields from database)
+    hoa_management_company: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    hoa_contact_phone: Optional[constr(strip_whitespace=True, max_length=20)] = None
+    hoa_contact_email: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
     # Finance / Meta
     community_dues: Optional[constr(strip_whitespace=True, max_length=64)] = None
     tax_rate: Optional[constr(strip_whitespace=True, max_length=32)] = None
@@ -263,6 +279,11 @@ class CommunityBase(BaseModel):
     development_start_year: Optional[int] = None
     is_master_planned: Optional[bool] = False
     enterprise_number_hoa: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    developer_name: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
+    # Reviews
+    rating: Optional[float] = None
+    review_count: Optional[int] = 0
 
     # Media
     intro_video_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
@@ -282,6 +303,22 @@ class CommunityUpdate(BaseModel):
     state: Optional[constr(strip_whitespace=True, max_length=64)] = None
     postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None
 
+    # Contact Information
+    phone: Optional[constr(strip_whitespace=True, max_length=32)] = None
+    email: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    sales_office_address: Optional[constr(strip_whitespace=True, max_length=512)] = None
+
+    # Schools
+    school_district: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    elementary_school: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    middle_school: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    high_school: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
+    # HOA Management
+    hoa_management_company: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    hoa_contact_phone: Optional[constr(strip_whitespace=True, max_length=20)] = None
+    hoa_contact_email: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
     community_dues: Optional[constr(strip_whitespace=True, max_length=64)] = None
     tax_rate: Optional[constr(strip_whitespace=True, max_length=32)] = None
     monthly_fee: Optional[constr(strip_whitespace=True, max_length=64)] = None
@@ -299,6 +336,11 @@ class CommunityUpdate(BaseModel):
     development_start_year: Optional[int] = None
     is_master_planned: Optional[bool] = None
     enterprise_number_hoa: Optional[constr(strip_whitespace=True, max_length=255)] = None
+    developer_name: Optional[constr(strip_whitespace=True, max_length=255)] = None
+
+    # Reviews
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
 
     intro_video_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None
     community_website_url: Optional[constr(strip_whitespace=True, max_length=1024)] = None

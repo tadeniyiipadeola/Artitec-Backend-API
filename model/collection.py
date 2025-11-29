@@ -264,6 +264,24 @@ class CollectionChange(Base):
         comment="Admin notes about the change"
     )
 
+    # Auto-apply tracking
+    auto_applied = Column(
+        Boolean, default=False, nullable=False,
+        comment="Was this change automatically applied?"
+    )
+    auto_apply_reason = Column(
+        String(255), nullable=True,
+        comment="Reason for auto-apply: filling_empty_field, data_quality_improvement, etc."
+    )
+    reverted_at = Column(
+        TIMESTAMP, nullable=True,
+        comment="When this auto-applied change was reverted (if ever)"
+    )
+    reverted_by = Column(
+        String(50), nullable=True,
+        comment="User ID who reverted this change"
+    )
+
     # Application
     applied_at = Column(
         TIMESTAMP, nullable=True,

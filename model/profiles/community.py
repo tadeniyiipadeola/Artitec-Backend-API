@@ -32,6 +32,11 @@ class Community(Base):
     postal_code = Column(String(20))
     address = Column(String(512))  # Full community address
 
+    # Contact Information
+    phone = Column(String(32))  # Community contact phone
+    email = Column(String(255))  # Community contact email
+    sales_office_address = Column(String(512))  # Sales office address
+
     # Location
     total_acres = Column(Float)  # Total acreage of the community
     latitude = Column(Float)  # Latitude coordinate
@@ -53,11 +58,21 @@ class Community(Base):
     founded_year = Column(Integer)
     member_count = Column(Integer, default=0)
 
+    # Schools
+    elementary_school = Column(String(255))  # Elementary school
+    middle_school = Column(String(255))  # Middle school
+    high_school = Column(String(255))  # High school
+
     # Development
     development_stage = Column(String(64))  # Phase 1-5, Completed
     development_start_year = Column(Integer)  # Year when development started
     is_master_planned = Column(Boolean, default=False)  # Whether this is a master-planned community
     enterprise_number_hoa = Column(String(255))  # Registration/Enterprise ID
+    developer_name = Column(String(255))  # Developer name
+
+    # Reviews
+    rating = Column(Float)  # Average rating (using Float for DECIMAL compatibility)
+    review_count = Column(Integer, default=0)  # Number of reviews
 
     # Status Management
     is_active = Column(Boolean, server_default='1', nullable=False)
