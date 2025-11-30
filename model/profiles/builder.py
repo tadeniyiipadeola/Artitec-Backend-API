@@ -73,8 +73,7 @@ class BuilderProfile(Base):
     verified = Column(Integer, default=0)        # 0 = not verified, 1 = verified
 
     # Legacy community association (use communities relationship for new code)
-    # NOTE: Despite the plural column name in DB, this stores a SINGLE community_id string
-    community_id = Column('community_ids', String(255), nullable=True)  # Legacy: single community_id string (e.g., "CMY-XXX")
+    community_id = Column(String(255), nullable=True)  # Legacy: single community_id string (e.g., "CMY-XXX")
     community_name = Column(String(255), nullable=True)  # Primary community name from collection data
 
     # Company information
