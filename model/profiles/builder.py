@@ -1,7 +1,7 @@
 # model/profiles/builder.py
 from sqlalchemy import (
-    Column, 
-    String, Float, Integer, Text, JSON, TIMESTAMP, ForeignKey, Table
+    Column,
+    String, Float, Integer, Text, JSON, TIMESTAMP, ForeignKey, Table, Boolean
 )
 import uuid
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
@@ -65,11 +65,17 @@ class BuilderProfile(Base):
     about = Column(Text)                         # Description/about field for collector
     phone = Column(String(64))
     email = Column(String(255))
-    address = Column(String(255), nullable=True)  # Full headquarters address (mapped as headquarters_address in API)
+    headquarters_address = Column(String(255), nullable=True)  # Main office/headquarters address
+    sales_office_address = Column(String(255), nullable=True)  # Sales office address (may be different from headquarters)
     city = Column(String(255))
     state = Column(String(64))
     postal_code = Column(String(20))
     verified = Column(Integer, default=0)        # 0 = not verified, 1 = verified
+
+    # Legacy community association (use communities relationship for new code)
+    # NOTE: Despite the plural column name in DB, this stores a SINGLE community_id string
+    community_id = Column('community_ids', String(255), nullable=True)  # Legacy: single community_id string (e.g., "CMY-XXX")
+    community_name = Column(String(255), nullable=True)  # Primary community name from collection data
 
     # Company information
     founded_year = Column(Integer, nullable=True)
@@ -79,10 +85,26 @@ class BuilderProfile(Base):
     # Review metrics
     review_count = Column(Integer, nullable=True, default=0)
 
+    # Price range for properties built by this builder
+    price_range_min = Column(Integer, nullable=True)
+    price_range_max = Column(Integer, nullable=True)
+
     # Former BuilderProfile metadata (merged here)
     title = Column(String(128))                  # e.g., "Owner", "Regional Manager"
     bio = Column(Text)
     socials = Column(JSON)                       # {"linkedin": "…", "x": "…"}
+
+    # Data collection tracking
+    last_data_sync = Column(TIMESTAMP, nullable=True)  # Last time data was synced/collected
+    data_source = Column(String(50), nullable=False, server_default='manual')  # 'manual', 'collected', etc.
+    data_confidence = Column(Float, nullable=False, server_default='1')  # Confidence score from collector (0.0-1.0)
+
+    # Status Management
+    is_active = Column(Boolean, server_default='1', nullable=False)
+    business_status = Column(String(50), server_default='active', nullable=False)  # active, inactive, out_of_business, etc.
+    last_activity_at = Column(TIMESTAMP, nullable=True)
+    inactivated_at = Column(TIMESTAMP, nullable=True)
+    inactivation_reason = Column(String(255), nullable=True)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(

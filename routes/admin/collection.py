@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from config.db import get_db
@@ -18,7 +19,8 @@ from src.collection.job_executor import (
     create_community_collection_job,
     create_builder_collection_job,
     create_property_inventory_job,
-    create_bulk_property_discovery_jobs
+    create_bulk_property_discovery_jobs,
+    create_bulk_builder_update_jobs
 )
 
 logger = logging.getLogger(__name__)
@@ -372,11 +374,16 @@ async def create_collection_job(
                     detail="Either search_query or location is required for discovery jobs"
                 )
         elif request.job_type == "update":
-            # For update jobs, entity_id is required
-            if not request.entity_id:
+            # For update jobs, entity_id is required UNLESS it's a bulk builder update
+            # (builder entity type with no entity_id and no search_query = bulk update)
+            is_bulk_builder_update = (request.entity_type == "builder" and
+                                     not request.entity_id and
+                                     not request.search_query)
+
+            if not request.entity_id and not is_bulk_builder_update:
                 raise HTTPException(
                     status_code=400,
-                    detail="entity_id is required for update jobs"
+                    detail="entity_id is required for update jobs (or omit both entity_id and search_query for builder bulk update)"
                 )
 
         # Route to appropriate job creator
@@ -389,6 +396,24 @@ async def create_collection_job(
                 # initiated_by=current_user.user_id
             )
         elif request.entity_type == "builder":
+            # For update job type without specific builder (bulk update mode)
+            if request.job_type == "update" and not request.entity_id and not request.search_query:
+                # Bulk builder update: Create update jobs for all existing builders
+                result = create_bulk_builder_update_jobs(
+                    db=db,
+                    priority=request.priority or 5,
+                    # initiated_by=current_user.user_id
+                )
+
+                # Return summary response instead of single job
+                return {
+                    "message": f"Created {result['jobs_created']} builder update jobs",
+                    "jobs_created": result['jobs_created'],
+                    "builders_processed": result['builders_processed'],
+                    "job_ids": result['job_ids'][:10]  # Return first 10 job IDs
+                }
+
+            # Single builder job (discovery or specific update)
             job = create_builder_collection_job(
                 db=db,
                 builder_id=request.entity_id,
@@ -1209,6 +1234,25 @@ async def review_change(
 
                 logger.info(f"Created new community {community.community_id} from change {change_id}")
 
+                # Auto-create amenities if provided in collected data
+                amenities_data = data.get("amenities", [])
+                if amenities_data and isinstance(amenities_data, list):
+                    from model.profiles.community import CommunityAmenity
+
+                    amenities_created = 0
+                    for amenity_name in amenities_data:
+                        if amenity_name and isinstance(amenity_name, str):
+                            amenity = CommunityAmenity(
+                                community_id=community.id,
+                                name=amenity_name.strip(),
+                                gallery=[]  # Empty gallery initially
+                            )
+                            db.add(amenity)
+                            amenities_created += 1
+
+                    if amenities_created > 0:
+                        logger.info(f"Auto-created {amenities_created} amenities for community {community.community_id}")
+
             elif change.entity_type == "builder":
                 from model.profiles.builder import BuilderProfile, builder_communities, BuilderAward, BuilderCredential
                 from src.collection.duplicate_detection import find_duplicate_builder
@@ -1219,6 +1263,227 @@ async def review_change(
 
                 # Get community_id from proposed data (this is the DB ID, not community_id string)
                 community_id = data.get("community_id")
+
+                # === ORPHANED BUILDER: TRIGGER COMMUNITY DISCOVERY ===
+                if not community_id:
+                    # Builder has no community link - trigger community discovery job
+                    builder_name = data.get("name", "Unknown Builder")
+
+                    # PRIORITY 1: Use community_name + community_city + community_state if available
+                    community_name = data.get("community_name")
+                    community_city = data.get("community_city")
+                    community_state = data.get("community_state")
+
+                    # PRIORITY 2: Fallback to builder's city/state
+                    city = data.get("city")
+                    state = data.get("state")
+
+                    # PRIORITY 3: Extract from address
+                    address = data.get("headquarters_address") or data.get("sales_office_address") or data.get("address")
+
+                    logger.info(f"Orphaned builder detected: {builder_name}")
+                    logger.info(f"  Community data: name={community_name}, city={community_city}, state={community_state}")
+                    logger.info(f"  Builder location: city={city}, state={state}")
+
+                    # Build search query from location data
+                    search_query = None
+
+                    # Best case: We have the community name and location
+                    if community_name and community_city and community_state:
+                        search_query = f"{community_name}, {community_city}, {community_state}"
+                        logger.info(f"Using community data for search: {search_query}")
+                    # Good case: We have builder's city/state
+                    elif city and state:
+                        search_query = f"{city}, {state}"
+                        logger.info(f"Using builder location for search: {search_query}")
+                    # Last resort: Try to extract from address
+                    elif address:
+                        import re
+                        addr_match = re.search(r',\s*([A-Za-z\s]+),?\s*([A-Z]{2})', address)
+                        if addr_match:
+                            search_query = f"{addr_match.group(1).strip()}, {addr_match.group(2).strip()}"
+                            logger.info(f"Extracted location from address: {search_query}")
+
+                    if search_query:
+                        # Create community discovery job
+                        logger.info(f"Creating community discovery job for location: {search_query}")
+
+                        # Create job directly
+                        import time
+                        import uuid
+                        job_id_str = f"JOB-{int(time.time())}-{uuid.uuid4().hex[:6].upper()}"
+
+                        community_job = CollectionJob(
+                            job_id=job_id_str,
+                            entity_type="community",
+                            job_type="discovery",
+                            search_query=search_query,
+                            priority=9,  # High priority since admin is waiting
+                            status="pending"
+                        )
+                        db.add(community_job)
+                        db.flush()
+
+                        if community_job:
+                            # Commit the job to database first
+                            db.commit()
+
+                            # Start the job immediately in background with a new DB session
+                            import threading
+                            from sqlalchemy.orm import sessionmaker
+                            from config.settings import DB_URL
+                            from sqlalchemy import create_engine
+
+                            def run_job():
+                                try:
+                                    # Create a new database session for the background thread
+                                    engine = create_engine(DB_URL)
+                                    SessionLocal = sessionmaker(bind=engine)
+                                    thread_db = SessionLocal()
+
+                                    try:
+                                        from src.collection.job_executor import JobExecutor
+                                        executor = JobExecutor(thread_db)
+                                        executor.execute_job(community_job.job_id)
+                                    finally:
+                                        thread_db.close()
+                                        engine.dispose()
+                                except Exception as e:
+                                    logger.error(f"Community discovery job failed: {e}")
+
+                            thread = threading.Thread(target=run_job, daemon=True)
+                            thread.start()
+
+                            logger.info(f"Started community discovery job {community_job.job_id} for orphaned builder")
+
+                            # Return info to admin that job was created
+                            return JSONResponse(
+                                status_code=202,
+                                content={
+                                    "message": f"Community discovery job started for {builder_name}",
+                                    "job_id": community_job.job_id,
+                                    "search_query": search_query,
+                                    "community_name": community_name,
+                                    "instruction": "Please wait for the community discovery job to complete, then retry approving this builder."
+                                }
+                            )
+                        else:
+                            logger.warning(f"Failed to create community discovery job for orphaned builder")
+                    else:
+                        logger.warning(f"Cannot create community discovery job: insufficient location data for {builder_name}")
+                        # Let it continue - builder will be created without community link
+
+                # AUTO-APPROVE PARENT COMMUNITY if needed (confidence >= 0.75)
+                if community_id:
+                    # Check if community exists in database
+                    community = db.query(Community).filter(Community.id == community_id).first()
+
+                    if not community:
+                        # Community doesn't exist yet - check if there's a pending change to approve
+                        logger.info(f"Builder references community ID {community_id} which doesn't exist yet - checking for pending community change")
+
+                        # Find the pending community change
+                        community_change = db.query(CollectionChange).filter(
+                            CollectionChange.entity_type == "community",
+                            CollectionChange.entity_id == community_id,
+                            CollectionChange.status == "pending",
+                            CollectionChange.is_new_entity == True
+                        ).first()
+
+                        if community_change:
+                            # Check confidence score
+                            community_data = community_change.proposed_entity_data or {}
+                            confidence = community_data.get("confidence", 0.0)
+
+                            # Handle both nested and flat confidence formats
+                            if isinstance(confidence, dict):
+                                confidence = confidence.get("overall", 0.0)
+
+                            if confidence >= 0.75:
+                                logger.info(f"Auto-approving parent community (change {community_change.id}) with confidence {confidence:.2%}")
+
+                                # Auto-approve the community change
+                                try:
+                                    # Create the community (reusing existing community creation logic)
+                                    timestamp = int(time.time())
+                                    random_suffix = uuid.uuid4().hex[:6].upper()
+                                    community_id_str = f"CMY-{timestamp}-{random_suffix}"
+
+                                    community = Community(
+                                        community_id=community_id_str,
+                                        name=community_data.get("name"),
+                                        city=community_data.get("city"),
+                                        state=community_data.get("state"),
+                                        zip_code=community_data.get("zip_code"),
+                                        description=community_data.get("description"),
+                                        builder_name=community_data.get("builder"),
+                                        price_range=community_data.get("price_range"),
+                                        home_styles=community_data.get("home_styles", []),
+                                        total_homes=community_data.get("total_homes"),
+                                        available_homes=community_data.get("available_homes"),
+                                        website_url=community_data.get("website_url") or community_data.get("website"),
+                                        sales_office_phone=community_data.get("sales_office_phone") or community_data.get("phone"),
+                                        sales_office_address=community_data.get("sales_office_address"),
+                                        hoa_fee=community_data.get("hoa_fee"),
+                                        schools=community_data.get("schools", {}),
+                                        data_source=community_data.get("data_source", "collected"),
+                                        data_confidence=confidence
+                                    )
+                                    db.add(community)
+                                    db.flush()
+
+                                    # Update the change record
+                                    community_change.status = "approved"
+                                    community_change.entity_id = community.id
+                                    community_change.reviewed_by = request.user_id
+                                    community_change.reviewed_at = func.current_timestamp()
+                                    community_change.review_notes = f"Auto-approved (confidence: {confidence:.2%}) as dependency for builder approval"
+
+                                    # Auto-create amenities if provided
+                                    amenities_data = community_data.get("amenities", [])
+                                    if amenities_data and isinstance(amenities_data, list):
+                                        from model.profiles.community import CommunityAmenity
+
+                                        amenities_created = 0
+                                        for amenity_name in amenities_data:
+                                            if amenity_name and isinstance(amenity_name, str):
+                                                amenity = CommunityAmenity(
+                                                    community_id=community.id,
+                                                    name=amenity_name.strip(),
+                                                    gallery=[]
+                                                )
+                                                db.add(amenity)
+                                                amenities_created += 1
+
+                                        if amenities_created > 0:
+                                            logger.info(f"Auto-created {amenities_created} amenities for auto-approved community {community.community_id}")
+
+                                    db.flush()
+                                    logger.info(f"Auto-approved and created community {community.community_id} (ID: {community.id}) for builder")
+
+                                    # Update community_id to use the newly created community
+                                    community_id = community.id
+
+                                except Exception as e:
+                                    logger.error(f"Failed to auto-approve parent community: {e}")
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=f"Failed to auto-approve parent community (confidence {confidence:.2%}): {str(e)}"
+                                    )
+                            else:
+                                # Confidence too low for auto-approval
+                                logger.warning(f"Cannot approve builder: parent community (change {community_change.id}) has confidence {confidence:.2%} < 75% threshold")
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail=f"Cannot approve builder: parent community has insufficient confidence ({confidence:.2%} < 75%). Please manually review and approve the community first."
+                                )
+                        else:
+                            # No pending change found
+                            logger.warning(f"Cannot approve builder: community ID {community_id} not found and no pending change exists")
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Cannot approve builder: parent community (ID {community_id}) does not exist. Please approve the community first."
+                            )
 
                 # Extract city and state from headquarters_address if not provided separately
                 city = data.get("city")
@@ -1278,16 +1543,22 @@ async def review_change(
                     state=state,
                     postal_code=postal_code,
                     headquarters_address=data.get("address") or data.get("headquarters_address"),
+                    sales_office_address=data.get("sales_office_address"),
                     phone=data.get("phone"),
                     email=data.get("email"),
                     website=data.get("website_url") or data.get("website"),
                     founded_year=data.get("year_founded") or data.get("founded_year"),
-                    description=data.get("description"),
+                    about=data.get("description"),
                     rating=data.get("rating"),
                     employee_count=data.get("employee_count"),
+                    service_areas=data.get("service_areas"),
+                    specialties=data.get("specialties"),
                     price_range_min=data.get("price_range_min"),
                     price_range_max=data.get("price_range_max"),
                     review_count=data.get("review_count"),
+                    community_name=data.get("community_name"),  # Primary community name from collection
+                    data_source=data.get("data_source", "collected"),
+                    data_confidence=data.get("data_confidence", 0.8),
                     verified=0  # Start as unverified
                 )
                 db.add(builder)
@@ -1333,12 +1604,21 @@ async def review_change(
                 # Link builder to community if community_id provided
                 if community_id:
                     try:
+                        # Insert into builder_communities join table
                         stmt = builder_communities.insert().values(
                             builder_id=builder.id,
                             community_id=community_id
                         )
                         db.execute(stmt)
-                        logger.info(f"Linked builder {builder.builder_id} to community ID {community_id}")
+
+                        # Also update legacy community_id field with public community_id string
+                        community = db.query(Community).filter(Community.id == community_id).first()
+                        if community:
+                            builder.community_id = community.community_id
+                            db.flush()
+                            logger.info(f"Linked builder {builder.builder_id} to community {community.community_id} (ID: {community_id})")
+                        else:
+                            logger.warning(f"Community ID {community_id} not found for legacy field update")
                     except Exception as e:
                         logger.warning(f"Failed to link builder to community {community_id}: {e}")
 

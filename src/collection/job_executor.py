@@ -505,3 +505,83 @@ def create_bulk_property_discovery_jobs(
         "builder_community_pairs": builder_community_pairs,
         "job_ids": job_ids
     }
+
+
+def create_bulk_builder_update_jobs(
+    db: Session,
+    priority: int = 5,
+    initiated_by: Optional[str] = None,
+    data_source_filter: Optional[str] = None
+) -> Dict:
+    """
+    Create builder update jobs for all existing builders in the database.
+
+    This fetches all builders and creates an update job for each one to refresh
+    their data from their websites.
+
+    Args:
+        db: Database session
+        priority: Priority for created jobs (default: 5)
+        initiated_by: User ID who initiated the job
+        data_source_filter: Optional filter for builders by data_source
+                          (e.g., 'collected', 'manual'). If None, updates all builders.
+
+    Returns:
+        Dictionary containing:
+            - jobs_created: Number of jobs created
+            - builders_processed: Total builders found and processed
+            - job_ids: List of created job IDs
+    """
+    from model.profiles.builder import BuilderProfile
+
+    # Query all builders, optionally filtering by data_source
+    query = db.query(BuilderProfile)
+
+    if data_source_filter:
+        query = query.filter(BuilderProfile.data_source == data_source_filter)
+
+    builders = query.all()
+
+    job_ids = []
+
+    for builder in builders:
+        # Skip builders without a website (can't collect data without one)
+        if not builder.website:
+            logger.warning(
+                f"Skipping builder '{builder.name}' (ID: {builder.id}) - no website URL"
+            )
+            continue
+
+        # Create builder update job using the builder's ID
+        # The collector will use the existing builder data (name, website) to update
+        job = create_builder_collection_job(
+            db=db,
+            builder_id=builder.id,  # Passing builder_id makes it an "update" job
+            builder_name=builder.name,  # Also pass name for reference
+            location=f"{builder.city}, {builder.state}" if builder.city and builder.state else None,
+            initiated_by=initiated_by
+        )
+
+        # Override priority if specified
+        if priority != 5:
+            job.priority = priority
+            db.commit()
+            db.refresh(job)
+
+        job_ids.append(job.job_id)
+
+        logger.info(
+            f"Created update job for builder '{builder.name}' "
+            f"(ID: {builder.id}, Job: {job.job_id})"
+        )
+
+    logger.info(
+        f"Bulk builder update complete: Created {len(job_ids)} jobs "
+        f"for {len(builders)} builders"
+    )
+
+    return {
+        "jobs_created": len(job_ids),
+        "builders_processed": len(builders),
+        "job_ids": job_ids
+    }
