@@ -178,6 +178,7 @@ class CollectionChangeResponse(BaseModel):
     associated_communities: Optional[list] = None  # List of community names builder is associated with
     property_bedrooms: Optional[int] = None  # For property entities - bedroom count
     property_bathrooms: Optional[float] = None  # For property entities - bathroom count
+    entity_community_id: Optional[str] = None  # Current community_id of the entity (for orphaned detection)
     is_new_entity: bool
     field_name: Optional[str]
     old_value: Optional[str]
@@ -205,6 +206,7 @@ class CollectionChangeResponse(BaseModel):
         reviewed_by_name = None
         property_bedrooms = None
         property_bathrooms = None
+        entity_community_id = None
 
         # Fetch reviewer name if reviewed_by is set
         if obj.reviewed_by:
@@ -249,7 +251,7 @@ class CollectionChangeResponse(BaseModel):
             except Exception as e:
                 logger.warning(f"Failed to fetch parent entity for {obj.entity_type}: {e}")
 
-        # Handle field-level changes - fetch entity name and communities for builders
+        # Handle field-level changes - fetch entity name, community_id, and communities for builders
         elif not obj.is_new_entity and obj.entity_id:
             try:
                 if obj.entity_type == "community":
@@ -263,6 +265,8 @@ class CollectionChangeResponse(BaseModel):
                     entity = db.query(BuilderProfile).filter(BuilderProfile.id == obj.entity_id).first()
                     if entity:
                         entity_name = entity.name
+                        # Store the community_id for orphaned detection
+                        entity_community_id = entity.community_id
                         # Fetch associated communities for this builder
                         try:
                             community_result = db.execute(text("""
@@ -278,10 +282,12 @@ class CollectionChangeResponse(BaseModel):
                         except Exception as comm_err:
                             logger.warning(f"Failed to fetch communities for builder {obj.entity_id}: {comm_err}")
                 elif obj.entity_type == "property":
-                    from model.profiles.property import Property
+                    from model.property.property import Property
                     entity = db.query(Property).filter(Property.id == obj.entity_id).first()
                     if entity:
-                        entity_name = entity.title or entity.address
+                        entity_name = entity.title or entity.address1
+                        # Store the community_id for orphaned detection
+                        entity_community_id = entity.community_id
             except Exception as e:
                 logger.warning(f"Failed to fetch entity name for {obj.entity_type} {obj.entity_id}: {e}")
 
@@ -296,6 +302,7 @@ class CollectionChangeResponse(BaseModel):
             'associated_communities': associated_communities,
             'property_bedrooms': property_bedrooms,
             'property_bathrooms': property_bathrooms,
+            'entity_community_id': entity_community_id,
             'is_new_entity': obj.is_new_entity,
             'field_name': obj.field_name,
             'old_value': obj.old_value,
