@@ -125,12 +125,27 @@ class Community(Base):
 # ---------- Related Tables ----------
 
 class CommunityAmenity(Base):
+    """
+    Amenities available in a community (pool, clubhouse, trails, etc.).
+    Each amenity can have a gallery of photos.
+    """
     __tablename__ = "community_amenities"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    gallery = Column(JSON)  # list of URLs
+    gallery = Column(JSON, default=list)  # list of photo URLs
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
+    )
+
+    # Relationship back to Community
+    community = relationship("Community", back_populates="amenities")
+
+    def __repr__(self):
+        return f"<CommunityAmenity(id={self.id}, name='{self.name}', community_id={self.community_id})>"
 
 
 class CommunityEvent(Base):

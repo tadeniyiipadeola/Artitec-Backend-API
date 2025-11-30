@@ -118,9 +118,11 @@ class BuilderCollector(BaseCollector):
             "phone": "phone",
             "email": "email",
             "headquarters_address": "headquarters_address",
+            "sales_office_address": "sales_office_address",
             "founded_year": "founded_year",
             "employee_count": "employee_count",
             "service_areas": "service_areas",
+            "specialties": "specialties",
             "price_range_min": "price_range_min",
             "price_range_max": "price_range_max",
             "rating": "rating",
@@ -254,6 +256,18 @@ class BuilderCollector(BaseCollector):
                 if not zip_code and match.group(3):
                     zip_code = match.group(3).strip()
 
+        # ===== EXTRACT PRIMARY COMMUNITY DATA =====
+        # Extract community name/city/state from collected data for orphaned builder handling
+        community_name = None
+        community_city = None
+        community_state = None
+
+        primary_community = collected_data.get("primary_community", {})
+        if isinstance(primary_community, dict):
+            community_name = primary_community.get("name")
+            community_city = primary_community.get("city")
+            community_state = primary_community.get("state")
+
         entity_data = {
             "name": builder_name,
             "description": collected_data.get("description"),
@@ -261,12 +275,14 @@ class BuilderCollector(BaseCollector):
             "phone": collected_data.get("phone"),
             "email": collected_data.get("email"),
             "headquarters_address": headquarters_address,
+            "sales_office_address": collected_data.get("sales_office_address"),
             "city": city,
             "state": state,
             "zip_code": zip_code,
             "founded_year": collected_data.get("founded_year"),
             "employee_count": collected_data.get("employee_count"),
             "service_areas": collected_data.get("service_areas", []),
+            "specialties": collected_data.get("specialties", []),
             "price_range_min": collected_data.get("price_range_min"),
             "price_range_max": collected_data.get("price_range_max"),
             "rating": collected_data.get("rating"),
@@ -274,13 +290,291 @@ class BuilderCollector(BaseCollector):
             "awards": collected_data.get("awards", []),
             "certifications": collected_data.get("certifications", []),
             "data_source": "collected",
-            "data_confidence": confidence
+            "data_confidence": confidence,
+            # Store community data for orphaned builder handling
+            "community_name": community_name,
+            "community_city": community_city,
+            "community_state": community_state
         }
 
-        # If this builder job was spawned from a community job, include the community_id
-        if self.job.parent_entity_type == "community" and self.job.parent_entity_id:
-            entity_data["community_id"] = self.job.parent_entity_id
-            self.log(f"Linking builder to community ID: {self.job.parent_entity_id}", "INFO", "matching")
+        # ===== ENHANCED COMMUNITY LOOKUP WITH LOCATION =====
+        community_id = None
+        primary_community = collected_data.get("primary_community", {})
+
+        # Handle case where primary_community might be a string instead of dict
+        if isinstance(primary_community, str):
+            # Escape curly braces to prevent f-string formatting errors
+            safe_preview = str(primary_community[:50]).replace('{', '{{').replace('}', '}}')
+            self.log(f"Warning: primary_community returned as string, attempting to parse: {safe_preview}...", "WARNING", "parsing")
+            try:
+                import json
+                primary_community = json.loads(primary_community)
+            except Exception as e:
+                self.log(f"Could not parse primary_community string: {str(e)}", "WARNING", "parsing")
+                primary_community = {}
+
+        if primary_community and isinstance(primary_community, dict):
+            community_name = primary_community.get("name")
+            community_city = primary_community.get("city")
+            community_state = primary_community.get("state")
+
+            if community_name:
+                # Safely format log message (community_name might contain curly braces if it's malformed JSON)
+                safe_community_name = str(community_name).replace('{', '{{').replace('}', '}}') if community_name else 'None'
+                safe_community_city = str(community_city).replace('{', '{{').replace('}', '}}') if community_city else 'None'
+                safe_community_state = str(community_state).replace('{', '{{').replace('}', '}}') if community_state else 'None'
+                self.log(
+                    f"Looking up community: {safe_community_name} in {safe_community_city}, {safe_community_state}",
+                    "INFO",
+                    "matching"
+                )
+
+                # Build query with location filters
+                from model.profiles.community import Community
+                from model.collection import CollectionChange
+
+                query = self.db.query(Community).filter(Community.name.ilike(f"%{community_name}%"))
+
+                # Add location filters if available
+                if community_city:
+                    query = query.filter(Community.city.ilike(f"%{community_city}%"))
+                if community_state:
+                    query = query.filter(Community.state == community_state.upper())
+
+                community = query.first()
+
+                if community:
+                    # Found approved community with location match
+                    community_id = community.id
+                    self.log(
+                        f"Found approved community: {community.name} (ID: {community.id}) in {community.city}, {community.state}",
+                        "INFO",
+                        "matching",
+                        {
+                            "community_id": community.id,
+                            "community_name": community.name,
+                            "location": f"{community.city}, {community.state}"
+                        }
+                    )
+                else:
+                    # Check for pending community change with location
+                    self.log("No approved community found, checking pending changes", "INFO", "matching")
+
+                    # Query pending community changes with location matching
+                    from sqlalchemy import and_, or_
+
+                    change_query = self.db.query(CollectionChange).filter(
+                        CollectionChange.entity_type == "community",
+                        CollectionChange.status.in_(["pending", "approved"]),
+                        CollectionChange.proposed_entity_data["name"].astext.ilike(f"%{community_name}%")
+                    )
+
+                    # Add location filters to pending changes
+                    if community_city:
+                        change_query = change_query.filter(
+                            CollectionChange.proposed_entity_data["city"].astext.ilike(f"%{community_city}%")
+                        )
+                    if community_state:
+                        change_query = change_query.filter(
+                            CollectionChange.proposed_entity_data["state"].astext == community_state.upper()
+                        )
+
+                    community_change = change_query.first()
+
+                    if community_change and community_change.entity_id:
+                        # Found pending community with location match
+                        community_id = community_change.entity_id
+                        change_data = community_change.proposed_entity_data or {}
+                        self.log(
+                            f"Found pending community change: {change_data.get('name')} (ID: {community_change.entity_id}) in {change_data.get('city')}, {change_data.get('state')}",
+                            "INFO",
+                            "matching",
+                            {
+                                "change_id": community_change.id,
+                                "entity_id": community_change.entity_id,
+                                "community_name": change_data.get("name"),
+                                "location": f"{change_data.get('city')}, {change_data.get('state')}"
+                            }
+                        )
+                    else:
+                        self.log(
+                            f"No community found for {community_name} in {community_city}, {community_state}",
+                            "WARNING",
+                            "matching"
+                        )
+
+                        # ===== AUTO-COLLECT AND CREATE COMMUNITY =====
+                        # Always create community to prevent orphaned builders
+                        # Confidence rating only affects auto-approval (>= 75%)
+                        if True:  # Always attempt community creation
+                            self.log(
+                                f"Auto-collecting community data for {community_name} (builder confidence: {confidence:.2%} >= 75%)",
+                                "INFO",
+                                "auto_creation"
+                            )
+
+                            try:
+                                # Import community collection prompt
+                                from .prompts import generate_community_collection_prompt
+                                from model.profiles.community import Community
+                                import time
+                                import uuid
+
+                                # Build location string for Claude
+                                location = f"{community_city}, {community_state}" if community_city and community_state else None
+
+                                # Generate community collection prompt
+                                self.log(
+                                    f"Calling Claude to collect full community data for {community_name} in {location}",
+                                    "INFO",
+                                    "auto_creation"
+                                )
+
+                                community_prompt = generate_community_collection_prompt(community_name, location)
+                                community_data = self.call_claude(community_prompt, max_tokens=8000)
+
+                                # Check if Claude returned valid data
+                                if "raw_response" in community_data:
+                                    self.log(
+                                        f"Claude returned non-JSON response for community {community_name}",
+                                        "WARNING",
+                                        "auto_creation"
+                                    )
+                                    # Fall back to minimal community creation
+                                    raise ValueError("Claude returned non-JSON response")
+
+                                # Extract community data (might be in 'communities' array or direct)
+                                if "communities" in community_data and isinstance(community_data["communities"], list) and len(community_data["communities"]) > 0:
+                                    # Area discovery mode - take first community
+                                    comm_info = community_data["communities"][0]
+                                else:
+                                    # Single community mode
+                                    comm_info = community_data
+
+                                # Generate unique community ID
+                                timestamp = int(time.time())
+                                random_suffix = uuid.uuid4().hex[:6].upper()
+                                community_id_str = f"CMY-{timestamp}-{random_suffix}"
+
+                                # Create community with full collected data
+                                new_community = Community(
+                                    community_id=community_id_str,
+                                    name=comm_info.get("name", community_name),
+                                    description=comm_info.get("description"),
+                                    city=comm_info.get("city", community_city),
+                                    state=comm_info.get("state", community_state).upper() if comm_info.get("state") or community_state else None,
+                                    postal_code=comm_info.get("postal_code") or comm_info.get("zip_code"),
+                                    address=comm_info.get("address"),
+                                    latitude=comm_info.get("latitude"),
+                                    longitude=comm_info.get("longitude"),
+                                    year_built=comm_info.get("year_built"),
+                                    total_homes=comm_info.get("total_homes"),
+                                    available_properties_count=comm_info.get("available_properties_count"),
+                                    sold_properties_count=comm_info.get("sold_properties_count"),
+                                    community_dues=comm_info.get("community_dues"),
+                                    monthly_fee=comm_info.get("monthly_fee"),
+                                    amenities=comm_info.get("amenities", []),
+                                    schools=comm_info.get("schools", []),
+                                    website=comm_info.get("website"),
+                                    phone=comm_info.get("phone"),
+                                    email=comm_info.get("email"),
+                                    rating=comm_info.get("rating"),
+                                    review_count=comm_info.get("review_count"),
+                                    development_status=comm_info.get("development_status", "active"),
+                                    development_stage=comm_info.get("development_stage"),
+                                    availability_status=comm_info.get("availability_status", "available"),
+                                    user_id=None,  # No owner yet
+                                    is_active=True,
+                                    data_source="collected",
+                                    data_confidence=comm_info.get("confidence", {}).get("overall", 0.8)
+                                )
+
+                                self.db.add(new_community)
+                                self.db.flush()
+
+                                community_id = new_community.id
+
+                                self.log(
+                                    f"Auto-created community with full data: {new_community.name} (ID: {new_community.id}, {community_id_str}) in {new_community.city}, {new_community.state}",
+                                    "SUCCESS",
+                                    "auto_creation",
+                                    {
+                                        "community_id": new_community.id,
+                                        "community_id_str": community_id_str,
+                                        "community_name": new_community.name,
+                                        "location": f"{new_community.city}, {new_community.state}",
+                                        "trigger": "builder_collection",
+                                        "builder_confidence": confidence,
+                                        "community_confidence": new_community.data_confidence,
+                                        "data_fields_collected": len([k for k, v in comm_info.items() if v is not None])
+                                    }
+                                )
+
+                            except Exception as e:
+                                self.log(
+                                    f"Failed to auto-collect community {community_name}: {str(e)}. Creating minimal record.",
+                                    "WARNING",
+                                    "auto_creation"
+                                )
+                                logger.warning(f"Failed to auto-collect community, falling back to minimal: {e}")
+
+                                try:
+                                    # Fallback: Create minimal community record
+                                    import time
+                                    import uuid
+                                    timestamp = int(time.time())
+                                    random_suffix = uuid.uuid4().hex[:6].upper()
+                                    community_id_str = f"CMY-{timestamp}-{random_suffix}"
+
+                                    from model.profiles.community import Community
+                                    new_community = Community(
+                                        community_id=community_id_str,
+                                        name=community_name,
+                                        city=community_city,
+                                        state=community_state.upper() if community_state else None,
+                                        user_id=None,
+                                        is_active=True,
+                                        development_status='active',
+                                        availability_status='available'
+                                    )
+                                    self.db.add(new_community)
+                                    self.db.flush()
+                                    community_id = new_community.id
+
+                                    self.log(
+                                        f"Created minimal community record: {community_name} (ID: {new_community.id})",
+                                        "INFO",
+                                        "auto_creation"
+                                    )
+                                except Exception as e2:
+                                    self.log(
+                                        f"Failed to create even minimal community: {str(e2)}",
+                                        "ERROR",
+                                        "auto_creation"
+                                    )
+                                    logger.error(f"Failed to create minimal community: {e2}")
+                                    community_id = None
+                        else:
+                            self.log(
+                                f"Builder confidence {confidence:.2%} < 75%, skipping auto-community-creation for {community_name}",
+                                "INFO",
+                                "auto_creation"
+                            )
+
+        # ===== FALLBACK TO JOB METADATA =====
+        # If community lookup failed, try using job.parent_entity_id as before
+        if not community_id and self.job.parent_entity_type == "community" and self.job.parent_entity_id:
+            community_id = self.job.parent_entity_id
+            self.log(
+                f"Using community ID from job metadata: {community_id}",
+                "INFO",
+                "matching"
+            )
+
+        # Add community_id if found
+        if community_id:
+            entity_data["community_id"] = community_id
+            self.log(f"Linking builder to community ID: {community_id}", "INFO", "matching")
 
         self.log(f"Recording new builder entity: {builder_name}", "INFO", "matching",
                 {"builder_name": builder_name, "confidence": confidence})

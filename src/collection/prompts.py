@@ -68,8 +68,22 @@ Extract ALL available information about this community. Be thorough and capture 
    - High school name
 
 6. AMENITIES
-   - List all amenities (pool, clubhouse, trails, parks, etc.)
-   - Amenity details and hours
+   - List all amenities the community offers. Use these standardized names when applicable:
+     * "Pool" or "Swimming pool"
+     * "Water park" or "Waterpark"
+     * "Fitness center" or "Gym"
+     * "Clubhouse" or "Club house"
+     * "Walking/biking trails" or "Trails"
+     * "Playground" or "Children's playground"
+     * "Dog park" or "Pet park"
+     * "Tennis courts"
+     * "Basketball courts"
+     * "Soccer field"
+     * "Golf course"
+     * "Lake access" or "Water access"
+     * "24/7 Security" or "Gated security"
+     * "Master-planned community"
+   - Include any other amenities not listed above
 
 7. REVIEWS & RATINGS
    - Overall community rating
@@ -195,8 +209,22 @@ Extract ALL available information about this community. Be thorough and capture 
    - High school name
 
 6. AMENITIES
-   - List all amenities (pool, clubhouse, trails, parks, etc.)
-   - Amenity details and hours
+   - List all amenities the community offers. Use these standardized names when applicable:
+     * "Pool" or "Swimming pool"
+     * "Water park" or "Waterpark"
+     * "Fitness center" or "Gym"
+     * "Clubhouse" or "Club house"
+     * "Walking/biking trails" or "Trails"
+     * "Playground" or "Children's playground"
+     * "Dog park" or "Pet park"
+     * "Tennis courts"
+     * "Basketball courts"
+     * "Soccer field"
+     * "Golf course"
+     * "Lake access" or "Water access"
+     * "24/7 Security" or "Gated security"
+     * "Master-planned community"
+   - Include any other amenities not listed above
 
 7. REVIEWS & RATINGS
    - Overall community rating
@@ -264,7 +292,9 @@ IMPORTANT:
 
 def generate_builder_collection_prompt(builder_name: str, location: Optional[str] = None) -> str:
     """Generate prompt for collecting builder data."""
-    location_str = f" in {location}" if location else ""
+    # Escape curly braces in location to prevent f-string formatting errors
+    safe_location = str(location).replace('{', '{{').replace('}', '}}') if location else None
+    location_str = f" in {safe_location}" if safe_location else ""
     return f"""
 Search the web for information about the home builder "{builder_name}"{location_str}.
 
@@ -278,7 +308,8 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Website URL
    - Phone number
    - Email
-   - Headquarters address (full street address)
+   - Headquarters address (main office/corporate headquarters address)
+   - Sales office address (Sales Office, Information Center, or customer-facing location - if different from headquarters)
    - City (headquarters city)
    - State (headquarters state - 2-letter code)
    - Postal code (ZIP code)
@@ -296,9 +327,14 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Review sources (BBB, Google, etc.)
    - Awards and certifications
 
-4. COMMUNITIES
-   - List of active communities where builder operates
-   - Community names and locations
+4. COMMUNITIES (IMPORTANT!)
+   - Primary community where this builder operates
+   - Community name, city, and state
+   - List of other active communities where builder operates
+
+   NOTE: We need the community location to match the builder to the correct community.
+   Example:
+   "primary_community": {{"name": "Willow Bend", "city": "Plano", "state": "TX"}}
 
 5. HOME PLANS
    - Available home plans/series
@@ -317,6 +353,7 @@ Return data as structured JSON:
   "phone": "string",
   "email": "string",
   "headquarters_address": "string",
+  "sales_office_address": "string",
   "city": "string",
   "state": "string",
   "postal_code": "string",
@@ -336,6 +373,11 @@ Return data as structured JSON:
     }}
   ],
   "certifications": ["array", "of", "certifications"],
+  "primary_community": {{
+    "name": "string",
+    "city": "string",
+    "state": "string (2-letter state code)"
+  }},
   "communities": [
     {{
       "name": "string",
