@@ -346,7 +346,8 @@ class CommunityCollector(BaseCollector):
             # Call Claude to collect community data
             prompt = generate_community_collection_prompt(community_name, location)
             # Use higher token limit for area discovery (multiple communities)
-            max_tokens = 16000 if not community_name else 8000
+            # Increased from 16000 to 24000 for better coverage
+            max_tokens = 24000 if not community_name else 12000
 
             self.log(f"Calling Claude API (max_tokens={max_tokens})...", "INFO", "searching")
             collected_data = self.call_claude(prompt, max_tokens=max_tokens)
@@ -421,28 +422,32 @@ class CommunityCollector(BaseCollector):
                         {"communities_created": new_communities}
                     )
 
-                    # PHASE 2: Create builder discovery jobs for each community
+                    # PHASE 2: Builder discovery is now DISABLED during initial collection
+                    # Builder jobs will be created AFTER communities are approved by admin
+                    # This prevents wasting resources on communities that may be rejected
                     builder_jobs_created = 0
-                    self.log(f"Creating builder discovery jobs for {len(communities_list)} communities", "INFO", "saving")
-
-                    for community_data in communities_list:
-                        try:
-                            builder_jobs = self._create_builder_discovery_jobs(community_data)
-                            builder_jobs_created += builder_jobs
-                        except Exception as e:
-                            community_name_for_error = community_data.get("name", "Unknown")
-                            error_msg = f"Failed to create builder jobs for {community_name_for_error}: {str(e)}"
-                            self.log(error_msg, "ERROR", "saving", {"error": str(e), "community": community_name_for_error})
-                            logger.error(error_msg, exc_info=True)
-                            # Continue with next community
-                            continue
-
                     self.log(
-                        f"Created {builder_jobs_created} builder discovery jobs",
-                        "SUCCESS",
+                        f"Builder discovery deferred - will be triggered after community approval",
+                        "INFO",
                         "saving",
-                        {"builder_jobs": builder_jobs_created}
+                        {"deferred_builders": True, "communities_pending_approval": new_communities}
                     )
+
+                    # Note: Builder data is already stored in the proposed_entity_data JSON
+                    # When admin approves a community, they can trigger builder discovery manually
+                    # or it can be automated through an approval webhook
+
+                    # COMMENTED OUT: Automatic builder job creation
+                    # for community_data in communities_list:
+                    #     try:
+                    #         builder_jobs = self._create_builder_discovery_jobs(community_data)
+                    #         builder_jobs_created += builder_jobs
+                    #     except Exception as e:
+                    #         community_name_for_error = community_data.get("name", "Unknown")
+                    #         error_msg = f"Failed to create builder jobs for {community_name_for_error}: {str(e)}"
+                    #         self.log(error_msg, "ERROR", "saving", {"error": str(e), "community": community_name_for_error})
+                    #         logger.error(error_msg, exc_info=True)
+                    #         continue
 
                     # Update job results
                     self.update_job_status(
@@ -452,9 +457,9 @@ class CommunityCollector(BaseCollector):
                     )
 
                     self.log(
-                        f"Area discovery completed: {len(communities_list)} communities, {builder_jobs_created} builder jobs queued",
+                        f"Area discovery completed: {len(communities_list)} communities found (builder discovery deferred until approval)",
                         "SUCCESS", "completed",
-                        {"communities": len(communities_list), "builder_jobs_queued": builder_jobs_created}
+                        {"communities": len(communities_list), "builder_jobs_queued": builder_jobs_created, "deferred": True}
                     )
 
                 except Exception as e:
@@ -480,16 +485,24 @@ class CommunityCollector(BaseCollector):
                         self.log(f"Creating new community: {community_name_found}", "INFO", "saving")
                         self._process_new_community(collected_data)
 
-                    # Create builder discovery jobs for this community
-                    self.log("Creating builder discovery jobs for community", "INFO", "saving")
-                    builder_jobs_created = self._create_builder_discovery_jobs(collected_data)
-
+                    # Builder discovery is now DISABLED during initial collection
+                    # Builder jobs will be created AFTER community is approved by admin
+                    builder_jobs_created = 0
                     self.log(
-                        f"Created {builder_jobs_created} builder discovery jobs",
-                        "SUCCESS",
+                        f"Builder discovery deferred - will be triggered after community approval",
+                        "INFO",
                         "saving",
-                        {"builder_jobs": builder_jobs_created}
+                        {"deferred_builders": True}
                     )
+
+                    # COMMENTED OUT: Automatic builder job creation
+                    # builder_jobs_created = self._create_builder_discovery_jobs(collected_data)
+                    # self.log(
+                    #     f"Created {builder_jobs_created} builder discovery jobs",
+                    #     "SUCCESS",
+                    #     "saving",
+                    #     {"builder_jobs": builder_jobs_created}
+                    # )
 
                     # Update community activity status
                     if self.community:
@@ -505,10 +518,10 @@ class CommunityCollector(BaseCollector):
                     )
 
                     self.log(
-                        f"Community collection completed: {builder_jobs_created} builder jobs queued",
+                        f"Community collection completed (builder discovery deferred until approval)",
                         "SUCCESS",
                         "completed",
-                        {"builder_jobs_queued": builder_jobs_created}
+                        {"builder_jobs_queued": builder_jobs_created, "deferred": True}
                     )
 
                 except Exception as e:
@@ -893,7 +906,7 @@ class CommunityCollector(BaseCollector):
         source_url = sources[0] if sources else None
 
         # Check for duplicate community BEFORE processing
-        community_name = collected_data.get("name", "Unknown")
+        community_name = collected_data.get("name") or "Unknown Community"
         self.log(f"Checking for duplicate community: {community_name}", "INFO", "matching")
 
         from .duplicate_detection import find_duplicate_community
@@ -934,7 +947,7 @@ class CommunityCollector(BaseCollector):
         self.log("Generating enterprise number...", "INFO", "saving")
         state = collected_data.get("state")
         year_founded = collected_data.get("year_established")
-        community_name = collected_data.get("name", "Unknown")
+        community_name = collected_data.get("name") or "Unknown Community"
 
         enterprise_number = None
         if state and year_founded and community_name:
@@ -1051,7 +1064,7 @@ class CommunityCollector(BaseCollector):
         # Record entity match (no match found, new entity)
         self.record_entity_match(
             discovered_entity_type="community",
-            discovered_name=collected_data.get("name", "Unknown"),
+            discovered_name=collected_data.get("name") or "Unknown Community",
             discovered_data=collected_data,
             discovered_location=collected_data.get("location"),
             matched_entity_id=None,

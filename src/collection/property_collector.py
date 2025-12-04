@@ -456,7 +456,7 @@ class PropertyCollector(BaseCollector):
 
         self.record_entity_match(
             discovered_entity_type="property",
-            discovered_name=prop_data.get("title", prop_data.get("address", "Unknown")),
+            discovered_name=prop_data.get("title") or prop_data.get("address") or "Unknown Property",
             discovered_data=prop_data,
             discovered_location=prop_data.get("address"),
             matched_entity_id=None,

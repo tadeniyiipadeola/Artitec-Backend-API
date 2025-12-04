@@ -46,9 +46,12 @@ class BuilderCollector(BaseCollector):
             # Get builder name and location from job
             if self.builder:
                 builder_name = self.builder.name
-                location = None  # Can get from communities if needed
+                # Get location from builder profile (city, state)
+                city = self.builder.city if hasattr(self.builder, 'city') and self.builder.city else None
+                state = self.builder.state if hasattr(self.builder, 'state') and self.builder.state else None
+                location = f"{city}, {state}" if city and state else (city or state or None)
                 self.log(f"Updating existing builder: {builder_name}", "INFO", "initialization",
-                        {"builder_id": self.builder.id, "builder_name": builder_name})
+                        {"builder_id": self.builder.id, "builder_name": builder_name, "location": location})
             else:
                 builder_name = self.job.search_query
                 filters = self.job.search_filters or {}
@@ -153,13 +156,13 @@ class BuilderCollector(BaseCollector):
                     {"changes_count": changes_found})
 
         # Process awards
-        if "awards" in collected_data:
+        if "awards" in collected_data and collected_data["awards"] is not None:
             awards_count = len(collected_data["awards"])
             self.log(f"Processing {awards_count} awards", "INFO", "matching")
             self._process_awards(collected_data["awards"], source_url)
 
         # Process certifications
-        if "certifications" in collected_data:
+        if "certifications" in collected_data and collected_data["certifications"] is not None:
             certs_count = len(collected_data["certifications"])
             self.log(f"Processing {certs_count} certifications", "INFO", "matching")
             self._process_certifications(collected_data["certifications"], source_url)
@@ -197,12 +200,33 @@ class BuilderCollector(BaseCollector):
         confidence = collected_data.get("confidence", {}).get("overall", 0.8)
         sources = collected_data.get("sources", [])
         source_url = sources[0] if sources else None
-        builder_name = collected_data.get("name", "Unknown")
+        builder_name = collected_data.get("name") or "Unknown Builder"
 
         # Check for duplicate builder BEFORE processing
         self.log(f"Checking for duplicate builder: {builder_name}", "INFO", "matching")
 
         from .duplicate_detection import find_duplicate_builder
+
+        # Get community_id from collected data or job context for location-aware matching
+        community_id_for_matching = None
+        primary_community = collected_data.get("primary_community", {})
+        if isinstance(primary_community, dict):
+            community_name = primary_community.get("name")
+            community_city = primary_community.get("city")
+            community_state = primary_community.get("state")
+
+            # Try to find existing community ID
+            if community_name and (community_city or community_state):
+                from model.profiles.community import Community
+                query = self.db.query(Community).filter(Community.name.ilike(f"%{community_name}%"))
+                if community_city:
+                    query = query.filter(Community.city.ilike(f"%{community_city}%"))
+                if community_state:
+                    query = query.filter(Community.state == community_state.upper())
+                community = query.first()
+                if community:
+                    community_id_for_matching = community.id
+                    self.log(f"Using community ID {community_id_for_matching} for location-aware builder matching", "INFO", "matching")
 
         duplicate_id, match_confidence, match_method = find_duplicate_builder(
             db=self.db,
@@ -211,7 +235,8 @@ class BuilderCollector(BaseCollector):
             state=collected_data.get("state"),
             website=collected_data.get("website"),
             phone=collected_data.get("phone"),
-            email=collected_data.get("email")
+            email=collected_data.get("email"),
+            community_id=community_id_for_matching
         )
 
         if duplicate_id:
@@ -345,13 +370,13 @@ class BuilderCollector(BaseCollector):
 
                 if community:
                     # Found approved community with location match
-                    community_id = community.id
+                    community_id = community.community_id  # Use the CMY-XXX string ID, not the database integer ID
                     self.log(
-                        f"Found approved community: {community.name} (ID: {community.id}) in {community.city}, {community.state}",
+                        f"Found approved community: {community.name} (ID: {community.community_id}) in {community.city}, {community.state}",
                         "INFO",
                         "matching",
                         {
-                            "community_id": community.id,
+                            "community_id": community.community_id,
                             "community_name": community.name,
                             "location": f"{community.city}, {community.state}"
                         }
@@ -361,22 +386,22 @@ class BuilderCollector(BaseCollector):
                     self.log("No approved community found, checking pending changes", "INFO", "matching")
 
                     # Query pending community changes with location matching
-                    from sqlalchemy import and_, or_
+                    from sqlalchemy import and_, or_, cast, String
 
                     change_query = self.db.query(CollectionChange).filter(
                         CollectionChange.entity_type == "community",
                         CollectionChange.status.in_(["pending", "approved"]),
-                        CollectionChange.proposed_entity_data["name"].astext.ilike(f"%{community_name}%")
+                        cast(CollectionChange.proposed_entity_data["name"], String).ilike(f"%{community_name}%")
                     )
 
                     # Add location filters to pending changes
                     if community_city:
                         change_query = change_query.filter(
-                            CollectionChange.proposed_entity_data["city"].astext.ilike(f"%{community_city}%")
+                            cast(CollectionChange.proposed_entity_data["city"], String).ilike(f"%{community_city}%")
                         )
                     if community_state:
                         change_query = change_query.filter(
-                            CollectionChange.proposed_entity_data["state"].astext == community_state.upper()
+                            cast(CollectionChange.proposed_entity_data["state"], String) == community_state.upper()
                         )
 
                     community_change = change_query.first()

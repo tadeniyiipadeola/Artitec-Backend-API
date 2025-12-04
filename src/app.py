@@ -18,6 +18,10 @@ from routes.admin import router as admin_enterprise_router
 from routes.media import router as media_router
 from fastapi.openapi.utils import get_openapi
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Optional routers (import if present)
 try:
     from routes.social.routes import router as social_router

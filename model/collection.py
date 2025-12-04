@@ -141,6 +141,10 @@ class CollectionJob(Base):
         Integer, default=0,
         comment="Number of changes detected"
     )
+    approved_changes = Column(
+        Integer, default=0,
+        comment="Number of changes that have been approved"
+    )
     new_entities_found = Column(
         Integer, default=0,
         comment="Number of new entities discovered (for discovery jobs)"

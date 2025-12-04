@@ -113,6 +113,7 @@ class CollectionJobResponse(BaseModel):
     search_filters: Optional[dict] = None
     items_found: int
     changes_detected: int
+    approved_changes: int
     new_entities_found: int
     error_message: Optional[str]
     created_at: str
@@ -149,6 +150,7 @@ class CollectionJobResponse(BaseModel):
             'search_filters': obj.search_filters,
             'items_found': obj.items_found or 0,
             'changes_detected': obj.changes_detected or 0,
+            'approved_changes': obj.approved_changes or 0,
             'new_entities_found': obj.new_entities_found or 0,
             'error_message': obj.error_message,
             'created_at': obj.created_at.isoformat() if obj.created_at else None,
@@ -909,6 +911,111 @@ async def retry_job(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/jobs/{job_id}/approve-all")
+async def approve_all_job_changes(
+    job_id: str,
+    notes: str = Query(None, description="Optional notes for the bulk approval"),
+    db: Session = Depends(get_db),
+    # current_user = Depends(get_current_admin_user)
+):
+    """
+    Approve all pending changes detected by a specific job.
+
+    This endpoint allows admin to bulk-approve all changes from a job,
+    which is useful after reviewing the job details and deciding all changes are valid.
+    """
+    try:
+        # Verify job exists
+        job = db.query(CollectionJob).filter(
+            CollectionJob.job_id == job_id
+        ).first()
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Get all pending changes for this job
+        pending_changes = db.query(CollectionChange).filter(
+            CollectionChange.job_id == job_id,
+            CollectionChange.status == "pending"
+        ).all()
+
+        if not pending_changes:
+            return {
+                "message": "No pending changes found for this job",
+                "job_id": job_id,
+                "approved_count": 0,
+                "failed_count": 0,
+                "errors": []
+            }
+
+        approved_count = 0
+        failed_count = 0
+        errors = []
+
+        logger.info(f"Bulk approving {len(pending_changes)} pending changes for job {job_id}")
+
+        # Process each change by calling the review endpoint for each
+        for change in pending_changes:
+            try:
+                # Create review request
+                review_request = ChangeReviewRequest(
+                    action="approve",
+                    notes=notes or f"Bulk approved from job {job_id}"
+                )
+
+                # Call the existing review_change function directly
+                await review_change(
+                    change_id=change.id,
+                    request=review_request,
+                    db=db
+                )
+
+                approved_count += 1
+
+            except HTTPException as http_exc:
+                # Handle HTTP exceptions (like 409 Conflict for duplicates)
+                failed_count += 1
+                error_msg = f"Change {change.id} ({change.entity_type}): {http_exc.detail}"
+                errors.append(error_msg)
+                logger.warning(f"Failed to approve change {change.id}: {http_exc.detail}")
+                # Continue with other changes
+                continue
+            except Exception as e:
+                failed_count += 1
+                error_msg = f"Change {change.id} ({change.entity_type}): {str(e)}"
+                errors.append(error_msg)
+                logger.error(f"Failed to approve change {change.id}: {str(e)}", exc_info=True)
+                # Continue with other changes
+                continue
+
+        # Update the job's approved_changes count
+        if approved_count > 0:
+            job.approved_changes = (job.approved_changes or 0) + approved_count
+            db.commit()
+            logger.info(f"Updated job {job_id} approved_changes count to {job.approved_changes}")
+
+        # Note: review_change already commits each change, so no need for additional commit
+
+        result = {
+            "message": f"Bulk approval completed for job {job_id}",
+            "job_id": job_id,
+            "total_changes": len(pending_changes),
+            "approved_count": approved_count,
+            "failed_count": failed_count,
+            "errors": errors if errors else None
+        }
+
+        logger.info(f"Bulk approval completed for job {job_id}: {approved_count} approved, {failed_count} failed")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to bulk approve changes for job {job_id}: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/jobs/reset-stuck")
 async def reset_stuck_jobs(
     timeout_minutes: int = Query(30, description="Consider jobs stuck after this many minutes"),
@@ -1262,6 +1369,7 @@ async def review_change(
 
             elif change.entity_type == "builder":
                 from model.profiles.builder import BuilderProfile, builder_communities, BuilderAward, BuilderCredential
+                from model.profiles.community import Community
                 from src.collection.duplicate_detection import find_duplicate_builder
                 import uuid
                 import re
@@ -1811,6 +1919,212 @@ async def review_change(
             db.rollback()
             raise HTTPException(status_code=500, detail=f"Failed to create entity: {str(e)}")
 
+    # Handle updates to EXISTING entities (bulk updates with proposed_entity_data)
+    elif request.action == "approve" and not change.is_new_entity and change.proposed_entity_data and change.entity_id:
+        try:
+            proposed_data = change.proposed_entity_data
+
+            if change.entity_type == "builder":
+                # Fetch existing builder
+                builder = db.query(BuilderProfile).filter(BuilderProfile.builder_id == change.entity_id).first()
+
+                if not builder:
+                    raise HTTPException(status_code=404, detail=f"Builder {change.entity_id} not found")
+
+                # Update builder fields from proposed data
+                if "name" in proposed_data:
+                    builder.name = proposed_data["name"]
+                if "phone" in proposed_data:
+                    builder.phone = proposed_data["phone"]
+                if "email" in proposed_data:
+                    builder.email = proposed_data["email"]
+                if "website" in proposed_data:
+                    builder.website = proposed_data["website"]
+                if "city" in proposed_data:
+                    builder.city = proposed_data["city"]
+                if "state" in proposed_data:
+                    builder.state = proposed_data["state"]
+                if "postal_code" in proposed_data:
+                    builder.postal_code = proposed_data["postal_code"]
+                if "headquarters_address" in proposed_data:
+                    builder.headquarters_address = proposed_data["headquarters_address"]
+                if "sales_office_address" in proposed_data:
+                    builder.sales_office_address = proposed_data["sales_office_address"]
+                if "about" in proposed_data:
+                    builder.about = proposed_data["about"]
+                if "community_id" in proposed_data:
+                    builder.community_id = proposed_data["community_id"]
+                if "community_name" in proposed_data:
+                    builder.community_name = proposed_data["community_name"]
+
+                # Update data collection metadata
+                builder.last_data_sync = datetime.utcnow()
+                builder.data_source = "collected"
+
+                db.add(builder)
+                logger.info(f"Updated existing builder {change.entity_id} from change {change_id}")
+
+            elif change.entity_type == "property":
+                # Fetch existing property
+                property_obj = db.query(Property).filter(Property.property_id == change.entity_id).first()
+
+                if not property_obj:
+                    raise HTTPException(status_code=404, detail=f"Property {change.entity_id} not found")
+
+                # Update property fields from proposed data
+                if "address1" in proposed_data:
+                    property_obj.address1 = proposed_data["address1"]
+                if "address2" in proposed_data:
+                    property_obj.address2 = proposed_data["address2"]
+                if "city" in proposed_data:
+                    property_obj.city = proposed_data["city"]
+                if "state" in proposed_data:
+                    property_obj.state = proposed_data["state"]
+                if "postal_code" in proposed_data:
+                    property_obj.postal_code = proposed_data["postal_code"]
+                if "price" in proposed_data:
+                    property_obj.price = proposed_data["price"]
+                if "bedrooms" in proposed_data:
+                    property_obj.bedrooms = proposed_data["bedrooms"]
+                if "bathrooms" in proposed_data:
+                    property_obj.bathrooms = proposed_data["bathrooms"]
+                if "square_feet" in proposed_data:
+                    property_obj.square_feet = proposed_data["square_feet"]
+                if "description" in proposed_data:
+                    property_obj.description = proposed_data["description"]
+                if "community_id" in proposed_data:
+                    property_obj.community_id = proposed_data["community_id"]
+                if "community_name" in proposed_data:
+                    property_obj.community_name = proposed_data["community_name"]
+
+                # Update data collection metadata
+                property_obj.last_data_sync = datetime.utcnow()
+                property_obj.data_source = "collected"
+
+                db.add(property_obj)
+                logger.info(f"Updated existing property {change.entity_id} from change {change_id}")
+
+            elif change.entity_type == "community":
+                # Fetch existing community
+                community = db.query(Community).filter(Community.community_id == change.entity_id).first()
+
+                if not community:
+                    raise HTTPException(status_code=404, detail=f"Community {change.entity_id} not found")
+
+                # Update community fields from proposed data
+                if "name" in proposed_data:
+                    community.name = proposed_data["name"]
+                if "description" in proposed_data:
+                    community.description = proposed_data["description"]
+                if "city" in proposed_data:
+                    community.city = proposed_data["city"]
+                if "state" in proposed_data:
+                    community.state = proposed_data["state"]
+                if "postal_code" in proposed_data:
+                    community.postal_code = proposed_data["postal_code"]
+                if "address" in proposed_data:
+                    community.address = proposed_data["address"]
+                if "website" in proposed_data:
+                    community.website = proposed_data["website"]
+                if "phone" in proposed_data:
+                    community.phone = proposed_data["phone"]
+                if "amenities" in proposed_data:
+                    community.amenities = proposed_data["amenities"]
+
+                # Update data collection metadata
+                community.last_data_sync = datetime.utcnow()
+                community.data_source = "collected"
+
+                db.add(community)
+                logger.info(f"Updated existing community {change.entity_id} from change {change_id}")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update entity from change {change_id}: {e}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Failed to update entity: {str(e)}")
+
+    # Handle field-level updates to EXISTING entities
+    elif request.action == "approve" and not change.is_new_entity and change.field_name and change.entity_id:
+        try:
+            if change.entity_type == "builder":
+                from model.profiles.builder import BuilderProfile
+
+                # Fetch existing builder by internal ID
+                builder = db.query(BuilderProfile).filter(BuilderProfile.id == change.entity_id).first()
+
+                if not builder:
+                    raise HTTPException(status_code=404, detail=f"Builder {change.entity_id} not found")
+
+                # Apply the field-level change
+                if hasattr(builder, change.field_name):
+                    setattr(builder, change.field_name, change.new_value)
+
+                    # Update data collection metadata (unless we're updating these fields themselves)
+                    if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
+                        builder.last_data_sync = datetime.utcnow()
+                        if change.field_name != 'data_source':
+                            builder.data_source = "collected"
+
+                    db.add(builder)
+                    logger.info(f"Updated builder {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
+                else:
+                    logger.warning(f"Builder field '{change.field_name}' does not exist, skipping update")
+
+            elif change.entity_type == "property":
+                # Fetch existing property by internal ID
+                property_obj = db.query(Property).filter(Property.id == change.entity_id).first()
+
+                if not property_obj:
+                    raise HTTPException(status_code=404, detail=f"Property {change.entity_id} not found")
+
+                # Apply the field-level change
+                if hasattr(property_obj, change.field_name):
+                    setattr(property_obj, change.field_name, change.new_value)
+
+                    # Update data collection metadata
+                    if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
+                        property_obj.last_data_sync = datetime.utcnow()
+                        if change.field_name != 'data_source':
+                            property_obj.data_source = "collected"
+
+                    db.add(property_obj)
+                    logger.info(f"Updated property {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
+                else:
+                    logger.warning(f"Property field '{change.field_name}' does not exist, skipping update")
+
+            elif change.entity_type == "community":
+                from model.profiles.community import Community
+
+                # Fetch existing community by internal ID
+                community = db.query(Community).filter(Community.id == change.entity_id).first()
+
+                if not community:
+                    raise HTTPException(status_code=404, detail=f"Community {change.entity_id} not found")
+
+                # Apply the field-level change
+                if hasattr(community, change.field_name):
+                    setattr(community, change.field_name, change.new_value)
+
+                    # Update data collection metadata
+                    if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
+                        community.last_data_sync = datetime.utcnow()
+                        if change.field_name != 'data_source':
+                            community.data_source = "collected"
+
+                    db.add(community)
+                    logger.info(f"Updated community {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
+                else:
+                    logger.warning(f"Community field '{change.field_name}' does not exist, skipping update")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to apply field change {change_id}: {e}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Failed to apply field change: {str(e)}")
+
     db.commit()
 
     logger.info(f"Change {change_id} {request.action}d by admin")
@@ -2123,7 +2437,8 @@ async def get_community_builder_coverage(
 @router.post("/backfill/community-builders")
 async def backfill_community_builders(
     priority: int = Query(7, description="Priority for created jobs (1-10)", ge=1, le=10),
-    dry_run: bool = Query(True, description="Preview without creating jobs"),
+    dry_run: bool = Query(False, description="Preview without creating jobs (default: False)"),
+    max_communities: int = Query(10, description="Maximum number of communities to process", ge=1, le=100),
     db: Session = Depends(get_db)
 ):
     """
@@ -2131,9 +2446,43 @@ async def backfill_community_builders(
 
     This endpoint implements the backfill functionality to fill data gaps
     in the cascading collection workflow (communities → builders → properties).
+
+    **NEW BEHAVIOR:**
+    - Calls Claude AI to find actual builders operating in each community
+    - Creates individual jobs for each builder (not one job per community)
+    - Reuses the same logic as normal community discovery flow
+
+    **Usage:**
+    - Default behavior creates jobs immediately (dry_run=false)
+    - Set dry_run=true to preview what would be created
+    - Use max_communities to limit batch size (default: 10 to avoid high API costs)
+
+    **Process:**
+    1. Finds communities with NO builders linked
+    2. For each community, calls Claude to find builders
+    3. Creates pending jobs for each builder found
+    4. Jobs must be executed separately via /jobs/execute-pending
+    5. Changes require manual review and approval
     """
     try:
         from sqlalchemy import text
+        from anthropic import Anthropic
+        from src.collection.prompts import generate_community_builders_prompt
+        import os
+        import json
+
+        # Initialize Claude client
+        anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+        # Check for existing pending builder discovery jobs to avoid duplicates
+        pending_jobs = db.query(CollectionJob).filter(
+            CollectionJob.entity_type == "builder",
+            CollectionJob.job_type == "discovery",
+            CollectionJob.status == "pending"
+        ).count()
+
+        if pending_jobs > 0:
+            logger.warning(f"Found {pending_jobs} existing pending builder discovery jobs")
 
         # Get communities without builders
         result = db.execute(text("""
@@ -2151,66 +2500,149 @@ async def backfill_community_builders(
                 "message": "All communities already have builders linked",
                 "communities_found": 0,
                 "jobs_created": 0,
+                "pending_jobs_exist": pending_jobs,
                 "dry_run": dry_run
             }
 
+        # Limit to max_communities (note: this controls API calls, not total jobs)
+        if len(communities_without_builders) > max_communities:
+            logger.info(f"Limiting backfill to {max_communities} communities (found {len(communities_without_builders)} total)")
+            communities_to_process = communities_without_builders[:max_communities]
+            communities_skipped = len(communities_without_builders) - max_communities
+        else:
+            communities_to_process = communities_without_builders
+            communities_skipped = 0
+
         jobs_preview = []
         jobs_created = []
+        total_builders_found = 0
+        communities_processed = 0
+        communities_with_errors = 0
 
-        for row in communities_without_builders:
+        # Process each community
+        for row in communities_to_process:
+            community_name = row.name
             location = f"{row.city}, {row.state}" if row.city and row.state else None
-            search_query = f"{row.name} builders"
-            if location:
-                search_query += f" {location}"
 
-            job_data = {
-                "community_id": row.id,
-                "community_name": row.name,
-                "location": location,
-                "search_query": search_query,
-                "priority": priority
-            }
+            logger.info(f"Backfill: Discovering builders for {community_name} ({location})")
 
-            jobs_preview.append(job_data)
+            try:
+                # Call Claude to find builders in this community
+                prompt = generate_community_builders_prompt(community_name, location or "")
 
-            if not dry_run:
-                # Create the actual job
-                job = CollectionJob(
-                    entity_type="builder",
-                    entity_id=None,
-                    job_type="discovery",
-                    parent_entity_type="community",
-                    parent_entity_id=row.id,
-                    status="pending",
-                    priority=priority,
-                    search_query=search_query,
-                    search_filters={
-                        "community_id": row.id,
-                        "community_name": row.name,
-                        "location": location
-                    },
-                    initiated_by="system_backfill"
+                message = anthropic_client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=4000,
+                    temperature=0,
+                    messages=[{"role": "user", "content": prompt}]
                 )
-                db.add(job)
-                jobs_created.append({
-                    "job_id": job.job_id,
-                    "community_name": row.name,
-                    "community_id": row.id
-                })
+
+                # Parse Claude's response
+                response_text = message.content[0].text
+
+                # Extract JSON from response
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    collected_data = json.loads(json_str)
+                else:
+                    logger.warning(f"No JSON found in Claude response for {community_name}")
+                    collected_data = {"builders": []}
+
+                builders = collected_data.get("builders", [])
+                logger.info(f"Found {len(builders)} builders for {community_name}")
+
+                # Create a job for each builder found
+                for builder_data in builders:
+                    builder_name = builder_data.get("name")
+                    if not builder_name:
+                        continue
+
+                    total_builders_found += 1
+
+                    job_data = {
+                        "community_id": row.id,
+                        "community_name": community_name,
+                        "location": location,
+                        "builder_name": builder_name,
+                        "search_query": builder_name,  # Just the builder name, not "{community} builders"
+                        "priority": priority
+                    }
+
+                    jobs_preview.append(job_data)
+
+                    if not dry_run:
+                        # Create the actual job
+                        job = CollectionJob(
+                            entity_type="builder",
+                            entity_id=None,
+                            job_type="discovery",
+                            parent_entity_type="community",
+                            parent_entity_id=row.id,
+                            status="pending",
+                            priority=priority,
+                            search_query=builder_name,  # JUST THE NAME
+                            search_filters={
+                                "community_id": row.id,
+                                "community_name": community_name,
+                                "location": location
+                            },
+                            initiated_by="system_backfill"
+                        )
+                        db.add(job)
+                        jobs_created.append({
+                            "job_id": job.job_id,
+                            "builder_name": builder_name,
+                            "community_name": community_name,
+                            "community_id": row.id
+                        })
+
+                # Successfully processed this community (whether builders found or not)
+                communities_processed += 1
+
+            except Exception as e:
+                logger.error(f"Failed to process community {community_name}: {str(e)}", exc_info=True)
+                communities_with_errors += 1
+                continue
 
         if not dry_run:
             db.commit()
-            logger.info(f"Created {len(jobs_created)} backfill jobs for communities without builders")
+            logger.info(f"Created {len(jobs_created)} builder discovery jobs across {communities_processed} communities")
 
-        return {
-            "message": f"{'Preview:' if dry_run else 'Created'} {len(jobs_preview)} builder discovery job(s)",
+        # Calculate costs (now based on actual API calls + job execution)
+        api_cost = communities_processed * 0.02  # Cost per Claude API call
+        job_execution_cost = total_builders_found * 0.03  # Cost per builder job execution
+        estimated_cost = api_cost + job_execution_cost
+        estimated_time_minutes = total_builders_found * 0.75  # ~45 seconds per job
+
+        response = {
+            "message": f"{'Would create' if dry_run else 'Created'} {len(jobs_preview)} builder discovery job(s) across {communities_processed} communities",
             "communities_found": len(communities_without_builders),
+            "communities_processed": communities_processed,
+            "communities_with_errors": communities_with_errors,
+            "builders_found": total_builders_found,
             "jobs_created": len(jobs_created) if not dry_run else 0,
+            "communities_skipped": communities_skipped,
+            "pending_jobs_exist": pending_jobs,
             "dry_run": dry_run,
-            "jobs_preview": jobs_preview if dry_run else None,
-            "jobs": jobs_created if not dry_run else None,
-            "priority": priority
+            "priority": priority,
+            "estimated_cost_usd": round(estimated_cost, 2),
+            "estimated_time_minutes": round(estimated_time_minutes, 1)
         }
+
+        # Include preview data in response
+        if dry_run or not jobs_created:
+            response["jobs_preview"] = jobs_preview[:20]  # Limit preview to first 20
+            if len(jobs_preview) > 20:
+                response["jobs_preview_truncated"] = f"Showing 20 of {len(jobs_preview)} jobs"
+        else:
+            response["jobs"] = jobs_created[:20]  # Limit to first 20 in response
+            if len(jobs_created) > 20:
+                response["jobs_truncated"] = f"Showing 20 of {len(jobs_created)} jobs"
+            response["next_step"] = "Execute pending jobs via POST /v1/admin/collection/jobs/execute-pending"
+
+        return response
 
     except Exception as e:
         db.rollback()

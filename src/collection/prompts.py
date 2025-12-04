@@ -12,15 +12,45 @@ def generate_community_collection_prompt(community_name: Optional[str], location
     # If no specific community name, do area discovery
     if not community_name:
         return f"""
-Search the web for ACTIVELY DEVELOPING residential communities in {location}.
+Search the web for ALL residential communities in {location}.
 
-IMPORTANT SEARCH FOCUS:
-- Prioritize communities that are "actively being developed" or "under development"
-- Focus on MASTER-PLANNED COMMUNITIES (communities with comprehensive planning, multiple phases, extensive amenities)
-- EXCLUDE communities that are "completed", "sold out", or "fully built out"
-- Look for communities with ongoing construction and available inventory
+IMPORTANT SEARCH STRATEGY:
+- Search for ALL types of communities: actively developing, completed, sold out, or under development
+- Include MASTER-PLANNED COMMUNITIES (comprehensive planning, multiple phases, extensive amenities)
+- Include smaller neighborhood communities and subdivisions
+- Cast a WIDE NET - we want comprehensive coverage of the entire area
 
-Find as many ACTIVE, DEVELOPING residential communities as possible. For EACH community found, extract the following information.
+DATA QUALITY REQUIREMENTS:
+- For EACH field, try to find data from AT LEAST 2 different sources
+- Cross-validate data across multiple websites when possible
+- Assign confidence >0.70 ONLY if data is verified from 2+ independent sources
+- Assign confidence 0.50-0.70 for single-source data that appears reliable
+- Assign confidence <0.50 for uncertain or incomplete data
+
+RECOMMENDED DATA SOURCES (check multiple):
+- Realtor.com, Zillow, Trulia (real estate listings)
+- Official community websites
+- Builder websites (Perry Homes, David Weekley, etc.)
+- HOA management company websites
+- County property records and assessor websites
+- Local real estate agency websites
+- Google Maps and reviews
+- Community Facebook pages or social media
+
+COMMUNITY VERIFICATION AND DEDICATED WEBSITES:
+- When you discover a potential community name, SEARCH for that community's dedicated website
+- Many communities have their own official websites (e.g., "txgrandranch.com" for TX Grand Ranch)
+- Search patterns to try: "[Community Name] official website", "[Community Name] [City] TX"
+- Community websites are typically the BEST source for accurate data (highest confidence)
+- If a community website exists, use it as the PRIMARY data source
+
+COMPLETENESS EMPHASIS:
+- If a field is missing, perform ADDITIONAL targeted searches specifically for that information
+- For small communities, check builder websites and local real estate listings
+- ALWAYS attempt to find the community's official website first
+- If you can't find data after thorough searching, leave the field empty rather than guessing
+
+Find as many residential communities as possible in {location}. For EACH community found, extract the following information.
 
 Extract ALL available information about this community. Be thorough and capture every detail you can find.
 
@@ -148,14 +178,47 @@ Return a JSON object with "communities" array:
 IMPORTANT:
 - Return multiple communities in the "communities" array
 - Only return data you can verify from web sources
-- Include confidence scores
-- List all source URLs where data was found
-- Aim to find at least 10-20 communities in the area
+- Include confidence scores reflecting the number of sources (2+ sources = higher confidence)
+- List ALL source URLs where data was found for each community
+- Aim to find as many communities as possible in the area (target: 15-30+ depending on market size)
+- Perform MULTIPLE search passes if needed to ensure comprehensive coverage:
+  * First pass: Major real estate sites (Realtor.com, Zillow)
+  * Second pass: Builder websites and community sites
+  * Third pass: Local listings and county records
+- For small markets with fewer communities, ensure each community has COMPLETE data
 """
 
     # Specific community search
     return f"""
 Search the web for information about the residential community "{community_name}" in {location}.
+
+DATA QUALITY REQUIREMENTS:
+- For EACH field, try to find data from AT LEAST 2 different sources
+- Cross-validate data across multiple websites when possible
+- Assign confidence >0.70 ONLY if data is verified from 2+ independent sources
+- Assign confidence 0.50-0.70 for single-source data that appears reliable
+- Assign confidence <0.50 for uncertain or incomplete data
+
+RECOMMENDED DATA SOURCES (check multiple):
+- Realtor.com, Zillow, Trulia (real estate listings)
+- Official community website
+- Builder websites operating in this community
+- HOA management company website
+- County property records and assessor websites
+- Google Maps and reviews
+- Community Facebook pages or social media
+
+COMMUNITY VERIFICATION AND DEDICATED WEBSITE:
+- SEARCH for this community's dedicated official website as your PRIMARY data source
+- Many communities have their own websites (e.g., "txgrandranch.com" for TX Grand Ranch)
+- Search patterns to try: "{community_name} official website", "{community_name} {location}"
+- Community websites are typically the BEST source for accurate data (highest confidence)
+
+COMPLETENESS EMPHASIS:
+- If a field is missing, perform ADDITIONAL targeted searches specifically for that information
+- Check builder websites for detailed community information
+- Check the community's official website first (if it exists)
+- If you can't find data after thorough searching, leave the field empty rather than guessing
 
 IMPORTANT: Pay special attention to:
 - Whether this is a MASTER-PLANNED COMMUNITY (comprehensive planning, multiple phases, extensive amenities)
@@ -306,13 +369,13 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Name (official company name)
    - Description (company overview)
    - Website URL
-   - Phone number
-   - Email
+   - Phone number (IMPORTANT: Get the phone number for the SPECIFIC LOCATION{location_str}. If searching for a builder in a specific city, find the local office phone number for that city, NOT the corporate headquarters or a different location)
+   - Email (IMPORTANT: Get the email for the SPECIFIC LOCATION{location_str}. If searching for a builder in a specific city, find the local office email for that city, NOT the corporate headquarters or a different location)
    - Headquarters address (main office/corporate headquarters address)
    - Sales office address (Sales Office, Information Center, or customer-facing location - if different from headquarters)
-   - City (headquarters city)
-   - State (headquarters state - 2-letter code)
-   - Postal code (ZIP code)
+   - City (IMPORTANT: City of the sales office for the SPECIFIC LOCATION{location_str}, NOT headquarters)
+   - State (IMPORTANT: State of the sales office for the SPECIFIC LOCATION{location_str} - 2-letter code, NOT headquarters)
+   - Postal code (IMPORTANT: ZIP code of the sales office for the SPECIFIC LOCATION{location_str}, NOT headquarters)
 
 2. COMPANY DETAILS
    - Year founded
@@ -328,13 +391,17 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Awards and certifications
 
 4. COMMUNITIES (IMPORTANT!)
-   - Primary community where this builder operates
+   - Primary community where this builder operates{location_str}
    - Community name, city, and state
-   - List of other active communities where builder operates
+   - List of ALL active communities where builder operates{location_str}
+
+   IMPORTANT: Use the location{location_str} to search for communities where this builder is actively building.
+   Search for "{builder_name} communities{location_str}" or "{builder_name} new home communities{location_str}"
 
    NOTE: We need the community location to match the builder to the correct community.
    Example:
    "primary_community": {{"name": "Willow Bend", "city": "Plano", "state": "TX"}}
+   "all_communities": [{{"name": "Willow Bend", "city": "Plano", "state": "TX"}}, {{"name": "Legacy Hills", "city": "Frisco", "state": "TX"}}]
 
 5. HOME PLANS
    - Available home plans/series
@@ -710,4 +777,51 @@ IMPORTANT:
 - If a field is not found, omit it or set to null
 - Only include reps that are currently active (not marked as "former" or "previous")
 - Be thorough - complete sales team information is essential
+"""
+
+
+def generate_community_builders_prompt(community_name: str, location: str) -> str:
+    """
+    Generate prompt for discovering builders operating in a specific community.
+
+    This is used by the backfill endpoint to find actual builder names before
+    creating individual builder discovery jobs.
+    """
+    return f"""
+Search the web to find which home builders operate in {community_name} located in {location}.
+
+IMPORTANT:
+- Return a LIST of builder NAMES only (not the community name itself)
+- {community_name} is a COMMUNITY, not a builder - do not include it in the results
+- Look for actual builder/construction companies that build homes in this community
+- Common sources: community website, realtor.com, zillow, builder websites
+
+RECOMMENDED DATA SOURCES:
+- Official {community_name} community website
+- Realtor.com and Zillow listings for {community_name}
+- Local real estate agent listings
+- Builder websites mentioning {community_name}
+- Community HOA website
+- Google search for "{community_name} home builders"
+
+## Output Format:
+Return data as structured JSON:
+{{
+  "builders": [
+    {{
+      "name": "Builder Company Name"
+    }}
+  ],
+  "sources": ["url1", "url2", "url3"]
+}}
+
+IMPORTANT NOTES:
+- Only include ACTUAL BUILDERS/CONSTRUCTION COMPANIES
+- DO NOT include:
+  * The community name itself
+  * Real estate agencies
+  * HOA management companies
+  * Property management firms
+- If you can't find any builders, return an empty array
+- Each builder should be a separate object with just the "name" field
 """
