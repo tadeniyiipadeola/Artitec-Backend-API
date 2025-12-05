@@ -611,10 +611,23 @@ class BuilderCollector(BaseCollector):
                 "matching"
             )
 
-        # Add community_id if found
+        # Add community_id if found and update community_name to match actual community
         if community_id:
             entity_data["community_id"] = community_id
-            self.log(f"Linking builder to community ID: {community_id}", "INFO", "matching")
+
+            # Get the actual community name from the database to ensure consistency
+            from model.profiles.community import Community
+            if isinstance(community_id, int):
+                actual_community = self.db.query(Community).filter(Community.id == community_id).first()
+            else:
+                actual_community = self.db.query(Community).filter(Community.community_id == community_id).first()
+
+            if actual_community:
+                # Override the community_name from Claude with the actual community name from DB
+                entity_data["community_name"] = actual_community.name
+                self.log(f"Linking builder to community: {actual_community.name} (ID: {community_id})", "INFO", "matching")
+            else:
+                self.log(f"Linking builder to community ID: {community_id}", "INFO", "matching")
 
         self.log(f"Recording new builder entity: {builder_name}", "INFO", "matching",
                 {"builder_name": builder_name, "confidence": confidence})
