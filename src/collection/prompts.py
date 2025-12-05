@@ -372,23 +372,41 @@ def generate_builder_collection_prompt(builder_name: str, location: Optional[str
 COMMUNITY-SPECIFIC SEARCH STRATEGY:
 This search is for the builder "{builder_name}" in the context of the '{safe_community}' community in {safe_location}.
 
-SEARCH STRATEGY (in order):
-1. First, find the builder's official website
-2. Search WITHIN the builder's website for '{safe_community}' to confirm they build there
+SEARCH STRATEGY:
+1. Find the builder's official website
+2. Search for the SPECIFIC COMMUNITY PAGE:
    - Try: "site:[builder-website].com {safe_community}"
-   - Or navigate to their communities page and look for '{safe_community}'
-3. If found on their site, collect all data and set primary_community to '{safe_community}'
-4. If NOT found on their site, still collect all builder data but set primary_community to null
+   - Try: "{builder_name} {safe_community} {safe_location}"
+   - Look for the community's dedicated page on the builder's site
+
+3. On the community page, find LOCAL SALES OFFICE INFORMATION:
+   CRITICAL: Look for community-specific contact information, NOT corporate headquarters!
+
+   - Sales office address (physical location IN or NEAR '{safe_community}')
+   - Sales office phone (local number for that community)
+   - Sales office email (community-specific or local sales team)
+   - Office title/type (e.g., "Sales Office", "Information Center", "Model Home Center")
+
+   Common locations for this info:
+   - "Contact Us" section on the community page
+   - "Visit Us" or "Schedule a Tour" sections
+   - "Sales Information" or "Model Home" sections
+   - Community-specific contact details (NOT the corporate "Contact" page)
+
+4. DISTINGUISH between headquarters and sales office:
+   - Headquarters: Corporate office (may be in a different state)
+   - Sales Office: Local office where customers visit in '{safe_community}' area
 
 CRITICAL REQUIREMENTS:
-- ALWAYS collect builder information (name, website, phone, description, headquarters, etc.)
-- NEVER return completely empty data
-- Be strict ONLY about the primary_community field
-- The community confirmation should come from the builder's own website when possible
+- ALWAYS collect general builder information (name, website, description, headquarters)
+- ACTIVELY SEARCH for community-specific sales office contact information
+- If you can't find local sales office info, still return all other data (don't return empty)
+- Set primary_community to '{safe_community}' only if confirmed on their website
 
 Example searches:
-- "site:tollbrothers.com Light Farms" (to verify on their site)
-- "{builder_name} communities {safe_location}" (to find their community list)
+- "site:tollbrothers.com Light Farms contact"
+- "site:tollbrothers.com Light Farms sales office"
+- "{builder_name} {safe_community} model home phone"
 """
     elif safe_location:
         search_context = f" in {safe_location}"
@@ -433,6 +451,22 @@ Example searches:
    "all_communities": [{{"name": "Willow Bend", "city": "Plano", "state": "TX"}}, {{"name": "Legacy Hills", "city": "Frisco", "state": "TX"}}]
 """
 
+    # Add extra emphasis for sales office data when we have community context
+    sales_office_emphasis = ""
+    if safe_community:
+        sales_office_emphasis = f"""
+
+   HOW TO FIND SALES OFFICE INFO FOR {safe_community}:
+   1. Go to the builder's {safe_community} community page
+   2. Look for "Contact", "Visit Us", "Schedule a Tour", or "Sales Information" sections
+   3. Extract the LOCAL contact information (phone, email, address) shown on that page
+   4. This is usually different from the corporate headquarters contact info
+   5. Common patterns:
+      - "Sales Office: (XXX) XXX-XXXX" or "Model Home: (XXX) XXX-XXXX"
+      - "Email: [community]@[builder].com" or "sales.[community]@[builder].com"
+      - Address will be IN or NEAR {safe_location}, NOT at corporate HQ
+"""
+
     return f"""
 Search the web for information about the home builder "{builder_name}"{search_context}.
 {strict_instruction}
@@ -452,7 +486,7 @@ Extract ALL available information about this builder. Be thorough and capture ev
 3. SALES OFFICE INFORMATION (Local customer-facing office{search_context})
    CRITICAL: The following fields are for the LOCAL SALES OFFICE{search_context} where customers go to buy homes.
    This is NOT the corporate headquarters - it's the local sales center, information center, or model home location.
-
+{sales_office_emphasis}
    - Title (Office type: "Sales Office", "Information Center", "Model Home Center", etc.)
    - Sales office address (IMPORTANT: FULL street address of the local sales office{search_context} including street number, street name, city, state, and ZIP code)
    - Phone number (IMPORTANT: Phone number for the SALES OFFICE at{search_context} - NOT corporate headquarters phone)
