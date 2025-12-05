@@ -368,29 +368,37 @@ Extract ALL available information about this builder. Be thorough and capture ev
 1. BASIC INFORMATION
    - Name (official company name)
    - Description (company overview)
-   - Website URL
-   - Phone number (IMPORTANT: Get the phone number for the SPECIFIC LOCATION{location_str}. If searching for a builder in a specific city, find the local office phone number for that city, NOT the corporate headquarters or a different location)
-   - Email (IMPORTANT: Get the email for the SPECIFIC LOCATION{location_str}. If searching for a builder in a specific city, find the local office email for that city, NOT the corporate headquarters or a different location)
-   - Headquarters address (main office/corporate headquarters address)
-   - Sales office address (Sales Office, Information Center, or customer-facing location - if different from headquarters)
-   - City (IMPORTANT: City of the sales office for the SPECIFIC LOCATION{location_str}, NOT headquarters)
-   - State (IMPORTANT: State of the sales office for the SPECIFIC LOCATION{location_str} - 2-letter code, NOT headquarters)
-   - Postal code (IMPORTANT: ZIP code of the sales office for the SPECIFIC LOCATION{location_str}, NOT headquarters)
+   - Website URL (corporate website)
 
-2. COMPANY DETAILS
+2. HEADQUARTERS INFORMATION (Corporate Office - SEPARATE from sales office)
+   - Headquarters address (FULL address of corporate headquarters including street, city, state, and ZIP code)
+
+3. SALES OFFICE INFORMATION (Local customer-facing office{location_str})
+   CRITICAL: The following fields are for the LOCAL SALES OFFICE{location_str} where customers go to buy homes.
+   This is NOT the corporate headquarters - it's the local sales center, information center, or model home location.
+
+   - Title (Office type: "Sales Office", "Information Center", "Model Home Center", etc.)
+   - Sales office address (IMPORTANT: FULL street address of the local sales office{location_str} including street number, street name, city, state, and ZIP code)
+   - Phone number (IMPORTANT: Phone number for the SALES OFFICE at{location_str} - NOT corporate headquarters phone)
+   - Email (IMPORTANT: Email for the SALES OFFICE at{location_str} - NOT corporate headquarters email. Look for sales team email, community-specific email, or local office email)
+   - City (City of the sales office{location_str}, extracted from the sales office address above)
+   - State (2-letter state code of the sales office{location_str}, extracted from the sales office address above)
+   - Postal code (IMPORTANT: ZIP code extracted from the sales office address above. Must match the ZIP in the sales office address field)
+
+4. COMPANY DETAILS
    - Year founded
    - Number of employees
    - Service areas (cities/regions where they build)
    - Specialties (custom homes, production homes, luxury, etc.)
    - Price range
 
-3. RATINGS & REVIEWS
+5. RATINGS & REVIEWS
    - Overall rating
    - Number of reviews
    - Review sources (BBB, Google, etc.)
    - Awards and certifications
 
-4. COMMUNITIES (IMPORTANT!)
+6. COMMUNITIES (IMPORTANT!)
    - Primary community where this builder operates{location_str}
    - Community name, city, and state
    - List of ALL active communities where builder operates{location_str}
@@ -403,11 +411,11 @@ Extract ALL available information about this builder. Be thorough and capture ev
    "primary_community": {{"name": "Willow Bend", "city": "Plano", "state": "TX"}}
    "all_communities": [{{"name": "Willow Bend", "city": "Plano", "state": "TX"}}, {{"name": "Legacy Hills", "city": "Frisco", "state": "TX"}}]
 
-5. HOME PLANS
+7. HOME PLANS
    - Available home plans/series
    - Plan names, square footage ranges, price ranges
 
-6. CONTACT INFORMATION
+8. CONTACT INFORMATION
    - Sales representatives
    - Office locations
 
@@ -417,13 +425,14 @@ Return data as structured JSON:
   "name": "string",
   "description": "string",
   "website": "string",
-  "phone": "string",
-  "email": "string",
-  "headquarters_address": "string",
-  "sales_office_address": "string",
-  "city": "string",
-  "state": "string",
-  "postal_code": "string",
+  "headquarters_address": "string (corporate HQ full address with street, city, state, ZIP)",
+  "title": "string (office type: 'Sales Office', 'Information Center', etc.)",
+  "sales_office_address": "string (local sales office full address with street, city, state, ZIP)",
+  "phone": "string (sales office phone)",
+  "email": "string (sales office email)",
+  "city": "string (sales office city, extracted from sales_office_address)",
+  "state": "string (sales office state, extracted from sales_office_address)",
+  "postal_code": "string (sales office ZIP, extracted from sales_office_address)",
   "founded_year": number,
   "employee_count": number,
   "service_areas": ["array", "of", "locations"],
