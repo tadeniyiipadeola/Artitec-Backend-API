@@ -295,16 +295,49 @@ class BuilderCollector(BaseCollector):
             self.log(f"Skipping duplicate builder: {builder_name}", "INFO", "matching")
             return
 
-        # Extract city and state from headquarters_address if available
+        # Extract city and state - prioritize sales office location over headquarters
         headquarters_address = collected_data.get("headquarters_address")
+        sales_office_address = collected_data.get("sales_office_address")
         city = collected_data.get("city")
         state = collected_data.get("state")
-        zip_code = collected_data.get("zip_code")
+        zip_code = collected_data.get("zip_code") or collected_data.get("postal_code")
 
-        # Parse address to extract city/state if not provided
+        # PRIORITY 1: If backfill mode with community, use community's city/state
+        filters = self.job.search_filters or {}
+        community_id_from_filters = filters.get('community_id')
+        if community_id_from_filters:
+            # Get city/state from the community we're backfilling for
+            from model.profiles.community import Community
+            if isinstance(community_id_from_filters, int):
+                community_obj = self.db.query(Community).filter(Community.id == community_id_from_filters).first()
+            else:
+                community_obj = self.db.query(Community).filter(Community.community_id == community_id_from_filters).first()
+
+            if community_obj:
+                # Use community's location for builder's city/state (this is where they operate)
+                city = community_obj.city
+                state = community_obj.state
+                self.log(
+                    f"Using community location for builder: {city}, {state}",
+                    "INFO",
+                    "parsing"
+                )
+
+        # PRIORITY 2: Parse from sales_office_address if available and city/state still missing
+        if sales_office_address and (not city or not state):
+            import re
+            match = re.search(r',\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s*(\d{5})?', sales_office_address)
+            if match:
+                if not city:
+                    city = match.group(1).strip()
+                if not state:
+                    state = match.group(2).strip()
+                if not zip_code and match.group(3):
+                    zip_code = match.group(3).strip()
+
+        # PRIORITY 3: Parse from headquarters_address as last resort
         if headquarters_address and (not city or not state):
             import re
-            # Try to parse city, state from address (e.g., "123 Main St, Houston, TX 77001")
             match = re.search(r',\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s*(\d{5})?', headquarters_address)
             if match:
                 if not city:
@@ -334,10 +367,10 @@ class BuilderCollector(BaseCollector):
             "phone": collected_data.get("phone"),
             "email": collected_data.get("email"),
             "headquarters_address": headquarters_address,
-            "sales_office_address": collected_data.get("sales_office_address"),
+            "sales_office_address": sales_office_address,
             "city": city,
             "state": state,
-            "zip_code": zip_code,
+            "postal_code": zip_code,
             "founded_year": collected_data.get("founded_year"),
             "employee_count": collected_data.get("employee_count"),
             "service_areas": collected_data.get("service_areas", []),
