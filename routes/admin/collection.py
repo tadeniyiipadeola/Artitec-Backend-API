@@ -1298,7 +1298,6 @@ async def review_change(
             if change.entity_type == "community":
                 from model.profiles.community import Community
                 from src.collection.duplicate_detection import find_duplicate_community
-                import uuid
 
                 data = change.proposed_entity_data
 
