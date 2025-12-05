@@ -304,8 +304,27 @@ def find_duplicate_builder(
             # validate location to ensure we match the correct office
             for candidate in candidates:
                 if validate_builder_location(db, candidate, community_id, city, state):
-                    logger.info(f"Found exact website match with location validation for builder {name}: {candidate.name} (ID: {candidate.id})")
-                    return candidate.id, 0.98, "website_exact_location_validated"
+                    # Additional check: if community_id is provided, only return as duplicate
+                    # if the builder is already linked to THIS specific community
+                    # (same builder can exist in multiple communities in same city)
+                    if community_id:
+                        is_in_community = db.execute(
+                            select(builder_communities).where(
+                                builder_communities.c.builder_id == candidate.id,
+                                builder_communities.c.community_id == community_id
+                            )
+                        ).first()
+
+                        if is_in_community:
+                            logger.info(f"Found exact website match with location validation for builder {name}: {candidate.name} (ID: {candidate.id}) in same community {community_id}")
+                            return candidate.id, 0.98, "website_exact_location_validated"
+                        else:
+                            logger.info(f"Found builder {candidate.name} (ID: {candidate.id}) with same website but in different community - allowing creation")
+                            continue
+                    else:
+                        # No community context, return match
+                        logger.info(f"Found exact website match with location validation for builder {name}: {candidate.name} (ID: {candidate.id})")
+                        return candidate.id, 0.98, "website_exact_location_validated"
 
             # If we found website matches but none passed location validation,
             # log a warning (likely different office/location of same builder)
