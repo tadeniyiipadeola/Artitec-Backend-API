@@ -1627,6 +1627,7 @@ async def review_change(
                             postal_code = match.group(3).strip()
 
                 # FINAL SAFETY CHECK: Check for duplicates before creating
+                # Pass community_id to check if builder already exists in THIS community
                 duplicate_id, match_confidence, match_method = find_duplicate_builder(
                     db=db,
                     name=data.get("name"),
@@ -1634,7 +1635,8 @@ async def review_change(
                     state=state,
                     website=data.get("website_url") or data.get("website"),
                     phone=data.get("phone"),
-                    email=data.get("email")
+                    email=data.get("email"),
+                    community_id=community_id  # Only reject if duplicate in same community
                 )
 
                 if duplicate_id:
