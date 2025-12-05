@@ -369,13 +369,26 @@ def generate_builder_collection_prompt(builder_name: str, location: Optional[str
     if safe_community and safe_location:
         search_context = f" in the '{safe_community}' community in {safe_location}"
         strict_instruction = f"""
-CRITICAL - STRICT COMMUNITY SEARCH:
-You MUST search for this builder specifically in the '{safe_community}' community in {safe_location}.
-- Search queries should include: "{builder_name} {safe_community} {safe_location}"
-- Only return information if the builder actually operates in '{safe_community}'
-- Do NOT return information about this builder from other communities or locations
-- The community name in your response MUST be '{safe_community}' if you find a match
-- If you cannot confirm the builder operates in '{safe_community}', return null/empty data
+COMMUNITY-SPECIFIC SEARCH STRATEGY:
+This search is for the builder "{builder_name}" in the context of the '{safe_community}' community in {safe_location}.
+
+SEARCH STRATEGY (in order):
+1. First, find the builder's official website
+2. Search WITHIN the builder's website for '{safe_community}' to confirm they build there
+   - Try: "site:[builder-website].com {safe_community}"
+   - Or navigate to their communities page and look for '{safe_community}'
+3. If found on their site, collect all data and set primary_community to '{safe_community}'
+4. If NOT found on their site, still collect all builder data but set primary_community to null
+
+CRITICAL REQUIREMENTS:
+- ALWAYS collect builder information (name, website, phone, description, headquarters, etc.)
+- NEVER return completely empty data
+- Be strict ONLY about the primary_community field
+- The community confirmation should come from the builder's own website when possible
+
+Example searches:
+- "site:tollbrothers.com Light Farms" (to verify on their site)
+- "{builder_name} communities {safe_location}" (to find their community list)
 """
     elif safe_location:
         search_context = f" in {safe_location}"
@@ -387,19 +400,22 @@ You MUST search for this builder specifically in the '{safe_community}' communit
     # Build community instruction based on whether we have strict community context
     if safe_community:
         community_instruction = f"""
-6. COMMUNITIES (CRITICAL - STRICT MATCH REQUIRED!)
+6. COMMUNITIES (CRITICAL - VERIFY ON BUILDER'S WEBSITE!)
    IMPORTANT: This search is for the builder in the SPECIFIC community '{safe_community}'.
 
-   - Primary community: MUST be '{safe_community}' if you confirm the builder operates there
-   - If you CANNOT confirm the builder operates in '{safe_community}', return null for primary_community
+   VERIFICATION PROCESS:
+   - Check the builder's official website for '{safe_community}' (use site: search or browse their communities page)
+   - If '{safe_community}' is listed on their website, set:
+     "primary_community": {{"name": "{safe_community}", "city": "...", "state": "..."}}
+
+   - If '{safe_community}' is NOT found on their website, set:
+     "primary_community": null
+
    - Do NOT substitute with a different community name, even if similar
-   - Community name, city, and state must match exactly
+   - Community name must match exactly: '{safe_community}'
 
-   Example response if builder is confirmed in '{safe_community}':
-   "primary_community": {{"name": "{safe_community}", "city": "...", "state": "..."}}
-
-   If builder is NOT in '{safe_community}', return:
-   "primary_community": null
+   IMPORTANT: Even if primary_community is null, still return ALL other builder data (name, website, phone, etc.).
+   Do NOT return an empty response just because the community can't be confirmed.
 """
     else:
         community_instruction = f"""
