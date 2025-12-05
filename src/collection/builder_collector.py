@@ -118,6 +118,7 @@ class BuilderCollector(BaseCollector):
         field_mapping = {
             "description": "description",
             "website": "website",
+            "title": "title",  # Office type
             "phone": "phone",
             "email": "email",
             "headquarters_address": "headquarters_address",
@@ -297,6 +298,7 @@ class BuilderCollector(BaseCollector):
             "name": builder_name,
             "description": collected_data.get("description"),
             "website": collected_data.get("website"),
+            "title": collected_data.get("title"),  # Office type (Sales Office, etc.)
             "phone": collected_data.get("phone"),
             "email": collected_data.get("email"),
             "headquarters_address": headquarters_address,

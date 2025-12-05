@@ -1665,6 +1665,7 @@ async def review_change(
                     builder_id=builder_id_str,
                     user_id="USR-1763443503-N3UTFX",  # Default admin user
                     name=data.get("name"),
+                    title=data.get("title"),  # Office type (Sales Office, etc.)
                     city=city,
                     state=state,
                     postal_code=postal_code,
