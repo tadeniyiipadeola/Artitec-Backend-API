@@ -66,7 +66,11 @@ def enrich_job_with_property_data(job, db: Session):
                 # Get community name - use as the main title
                 if community_id:
                     from model.profiles.community import Community
-                    community = db.query(Community).filter(Community.id == community_id).first()
+                    # community_id can be either integer (DB ID) or string (public CMY-XXX ID)
+                    if isinstance(community_id, int):
+                        community = db.query(Community).filter(Community.id == community_id).first()
+                    else:
+                        community = db.query(Community).filter(Community.community_id == community_id).first()
                     if community:
                         job.property_community_id = community_id
                         job.property_community_name = community.name
@@ -245,7 +249,11 @@ class CollectionChangeResponse(BaseModel):
                         parent_entity_id = builder_id
                 elif community_id:
                     from model.profiles.community import Community
-                    community = db.query(Community).filter(Community.id == community_id).first()
+                    # community_id can be either integer (DB ID) or string (public CMY-XXX ID)
+                    if isinstance(community_id, int):
+                        community = db.query(Community).filter(Community.id == community_id).first()
+                    else:
+                        community = db.query(Community).filter(Community.community_id == community_id).first()
                     if community:
                         entity_name = community.name
                         parent_entity_type = "community"
@@ -1376,7 +1384,7 @@ async def review_change(
 
                 data = change.proposed_entity_data
 
-                # Get community_id from proposed data (this is the DB ID, not community_id string)
+                # Get community_id from proposed data (this is the public string ID like CMY-XXX, not the internal DB integer ID)
                 community_id = data.get("community_id")
 
                 # === ORPHANED BUILDER: TRIGGER COMMUNITY DISCOVERY ===
@@ -1491,7 +1499,11 @@ async def review_change(
                 # AUTO-APPROVE PARENT COMMUNITY if needed (confidence >= 0.75)
                 if community_id:
                     # Check if community exists in database
-                    community = db.query(Community).filter(Community.id == community_id).first()
+                    # community_id can be either integer (DB ID) or string (public CMY-XXX ID)
+                    if isinstance(community_id, int):
+                        community = db.query(Community).filter(Community.id == community_id).first()
+                    else:
+                        community = db.query(Community).filter(Community.community_id == community_id).first()
 
                     if not community:
                         # Community doesn't exist yet - check if there's a pending change to approve
@@ -1727,7 +1739,11 @@ async def review_change(
                         db.execute(stmt)
 
                         # Also update legacy community_id field with public community_id string
-                        community = db.query(Community).filter(Community.id == community_id).first()
+                        # community_id can be either integer (DB ID) or string (public CMY-XXX ID)
+                        if isinstance(community_id, int):
+                            community = db.query(Community).filter(Community.id == community_id).first()
+                        else:
+                            community = db.query(Community).filter(Community.community_id == community_id).first()
                         if community:
                             builder.community_id = community.community_id
                             db.flush()
@@ -1769,7 +1785,11 @@ async def review_change(
                 from model.profiles.community import Community
 
                 builder = db.query(BuilderProfile).filter(BuilderProfile.id == builder_id).first()
-                community = db.query(Community).filter(Community.id == community_id).first()
+                # community_id can be either integer (DB ID) or string (public CMY-XXX ID)
+                if isinstance(community_id, int):
+                    community = db.query(Community).filter(Community.id == community_id).first()
+                else:
+                    community = db.query(Community).filter(Community.community_id == community_id).first()
 
                 if not builder:
                     change.status = "rejected"
