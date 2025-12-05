@@ -86,6 +86,15 @@ class BuilderCollector(BaseCollector):
             self.log(f"Calling Claude API to collect data for: {builder_name}", "INFO", "searching")
             prompt = generate_builder_collection_prompt(builder_name, location, community_name_for_search)
             collected_data = self.call_claude(prompt)
+
+            # Log what Claude returned for debugging
+            builder_name_from_claude = collected_data.get("name", "NOT_PROVIDED")
+            primary_community_from_claude = collected_data.get("primary_community", "NOT_PROVIDED")
+            self.log(
+                f"Claude returned: builder_name='{builder_name_from_claude}', primary_community={primary_community_from_claude}",
+                "INFO",
+                "searching"
+            )
             self.log("Claude API call completed successfully", "SUCCESS", "searching")
 
             # Process collected data

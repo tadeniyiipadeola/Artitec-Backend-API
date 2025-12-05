@@ -209,6 +209,10 @@ class BaseCollector:
         try:
             logger.info(f"Calling Claude API (max_tokens={max_tokens}, timeout={timeout}s)...")
 
+            # Log the prompt (first 500 chars for debugging)
+            prompt_preview = prompt[:500].replace('\n', ' ')
+            logger.info(f"Prompt preview: {prompt_preview}...")
+
             message = self.anthropic_client.messages.create(
                 model="claude-sonnet-4-5-20250929",
                 max_tokens=max_tokens,
@@ -223,6 +227,10 @@ class BaseCollector:
 
             # Extract text content
             response_text = message.content[0].text
+
+            # Log response preview for debugging
+            response_preview = response_text[:500].replace('\n', ' ')
+            logger.info(f"Response preview: {response_preview}...")
 
             # Try to parse as JSON
             try:
