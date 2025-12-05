@@ -5,6 +5,7 @@ API endpoints for managing data collection jobs.
 """
 import logging
 import time
+import uuid
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
@@ -1379,7 +1380,6 @@ async def review_change(
                 from model.profiles.builder import BuilderProfile, builder_communities, BuilderAward, BuilderCredential
                 from model.profiles.community import Community
                 from src.collection.duplicate_detection import find_duplicate_builder
-                import uuid
                 import re
 
                 data = change.proposed_entity_data
@@ -1432,8 +1432,6 @@ async def review_change(
                         logger.info(f"Creating community discovery job for location: {search_query}")
 
                         # Create job directly
-                        import time
-                        import uuid
                         job_id_str = f"JOB-{int(time.time())}-{uuid.uuid4().hex[:6].upper()}"
 
                         community_job = CollectionJob(
