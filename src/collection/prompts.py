@@ -353,13 +353,73 @@ IMPORTANT:
 """
 
 
-def generate_builder_collection_prompt(builder_name: str, location: Optional[str] = None) -> str:
-    """Generate prompt for collecting builder data."""
+def generate_builder_collection_prompt(builder_name: str, location: Optional[str] = None, community_name: Optional[str] = None) -> str:
+    """Generate prompt for collecting builder data.
+
+    Args:
+        builder_name: Name of the builder to search for
+        location: City, State location context
+        community_name: STRICT - Specific community name to search within (for backfill jobs)
+    """
     # Escape curly braces in location to prevent f-string formatting errors
     safe_location = str(location).replace('{', '{{').replace('}', '}}') if location else None
-    location_str = f" in {safe_location}" if safe_location else ""
+    safe_community = str(community_name).replace('{', '{{').replace('}', '}}') if community_name else None
+
+    # Build search context based on available information
+    if safe_community and safe_location:
+        search_context = f" in the '{safe_community}' community in {safe_location}"
+        strict_instruction = f"""
+CRITICAL - STRICT COMMUNITY SEARCH:
+You MUST search for this builder specifically in the '{safe_community}' community in {safe_location}.
+- Search queries should include: "{builder_name} {safe_community} {safe_location}"
+- Only return information if the builder actually operates in '{safe_community}'
+- Do NOT return information about this builder from other communities or locations
+- The community name in your response MUST be '{safe_community}' if you find a match
+- If you cannot confirm the builder operates in '{safe_community}', return null/empty data
+"""
+    elif safe_location:
+        search_context = f" in {safe_location}"
+        strict_instruction = ""
+    else:
+        search_context = ""
+        strict_instruction = ""
+
+    # Build community instruction based on whether we have strict community context
+    if safe_community:
+        community_instruction = f"""
+6. COMMUNITIES (CRITICAL - STRICT MATCH REQUIRED!)
+   IMPORTANT: This search is for the builder in the SPECIFIC community '{safe_community}'.
+
+   - Primary community: MUST be '{safe_community}' if you confirm the builder operates there
+   - If you CANNOT confirm the builder operates in '{safe_community}', return null for primary_community
+   - Do NOT substitute with a different community name, even if similar
+   - Community name, city, and state must match exactly
+
+   Example response if builder is confirmed in '{safe_community}':
+   "primary_community": {{"name": "{safe_community}", "city": "...", "state": "..."}}
+
+   If builder is NOT in '{safe_community}', return:
+   "primary_community": null
+"""
+    else:
+        community_instruction = f"""
+6. COMMUNITIES (IMPORTANT!)
+   - Primary community where this builder operates{search_context}
+   - Community name, city, and state
+   - List of ALL active communities where builder operates{search_context}
+
+   IMPORTANT: Use the location{search_context} to search for communities where this builder is actively building.
+   Search for "{builder_name} communities{search_context}" or "{builder_name} new home communities{search_context}"
+
+   NOTE: We need the community location to match the builder to the correct community.
+   Example:
+   "primary_community": {{"name": "Willow Bend", "city": "Plano", "state": "TX"}}
+   "all_communities": [{{"name": "Willow Bend", "city": "Plano", "state": "TX"}}, {{"name": "Legacy Hills", "city": "Frisco", "state": "TX"}}]
+"""
+
     return f"""
-Search the web for information about the home builder "{builder_name}"{location_str}.
+Search the web for information about the home builder "{builder_name}"{search_context}.
+{strict_instruction}
 
 Extract ALL available information about this builder. Be thorough and capture every detail.
 
@@ -373,16 +433,16 @@ Extract ALL available information about this builder. Be thorough and capture ev
 2. HEADQUARTERS INFORMATION (Corporate Office - SEPARATE from sales office)
    - Headquarters address (FULL address of corporate headquarters including street, city, state, and ZIP code)
 
-3. SALES OFFICE INFORMATION (Local customer-facing office{location_str})
-   CRITICAL: The following fields are for the LOCAL SALES OFFICE{location_str} where customers go to buy homes.
+3. SALES OFFICE INFORMATION (Local customer-facing office{search_context})
+   CRITICAL: The following fields are for the LOCAL SALES OFFICE{search_context} where customers go to buy homes.
    This is NOT the corporate headquarters - it's the local sales center, information center, or model home location.
 
    - Title (Office type: "Sales Office", "Information Center", "Model Home Center", etc.)
-   - Sales office address (IMPORTANT: FULL street address of the local sales office{location_str} including street number, street name, city, state, and ZIP code)
-   - Phone number (IMPORTANT: Phone number for the SALES OFFICE at{location_str} - NOT corporate headquarters phone)
-   - Email (IMPORTANT: Email for the SALES OFFICE at{location_str} - NOT corporate headquarters email. Look for sales team email, community-specific email, or local office email)
-   - City (City of the sales office{location_str}, extracted from the sales office address above)
-   - State (2-letter state code of the sales office{location_str}, extracted from the sales office address above)
+   - Sales office address (IMPORTANT: FULL street address of the local sales office{search_context} including street number, street name, city, state, and ZIP code)
+   - Phone number (IMPORTANT: Phone number for the SALES OFFICE at{search_context} - NOT corporate headquarters phone)
+   - Email (IMPORTANT: Email for the SALES OFFICE at{search_context} - NOT corporate headquarters email. Look for sales team email, community-specific email, or local office email)
+   - City (City of the sales office{search_context}, extracted from the sales office address above)
+   - State (2-letter state code of the sales office{search_context}, extracted from the sales office address above)
    - Postal code (IMPORTANT: ZIP code extracted from the sales office address above. Must match the ZIP in the sales office address field)
 
 4. COMPANY DETAILS
@@ -398,18 +458,7 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Review sources (BBB, Google, etc.)
    - Awards and certifications
 
-6. COMMUNITIES (IMPORTANT!)
-   - Primary community where this builder operates{location_str}
-   - Community name, city, and state
-   - List of ALL active communities where builder operates{location_str}
-
-   IMPORTANT: Use the location{location_str} to search for communities where this builder is actively building.
-   Search for "{builder_name} communities{location_str}" or "{builder_name} new home communities{location_str}"
-
-   NOTE: We need the community location to match the builder to the correct community.
-   Example:
-   "primary_community": {{"name": "Willow Bend", "city": "Plano", "state": "TX"}}
-   "all_communities": [{{"name": "Willow Bend", "city": "Plano", "state": "TX"}}, {{"name": "Legacy Hills", "city": "Frisco", "state": "TX"}}]
+{community_instruction}
 
 7. HOME PLANS
    - Available home plans/series

@@ -59,9 +59,32 @@ class BuilderCollector(BaseCollector):
                 self.log(f"Discovering new builder: {builder_name}", "INFO", "initialization",
                         {"builder_name": builder_name, "location": location})
 
-            # Call Claude to collect builder data
+            # Get community context for strict search (if backfill job)
+            filters = self.job.search_filters or {}
+            community_id_for_search = filters.get('community_id')
+            community_name_for_search = None
+
+            if community_id_for_search:
+                # Lookup the actual community name to pass to Claude for strict search
+                from model.profiles.community import Community
+                if isinstance(community_id_for_search, int):
+                    community_obj = self.db.query(Community).filter(Community.id == community_id_for_search).first()
+                else:
+                    community_obj = self.db.query(Community).filter(Community.community_id == community_id_for_search).first()
+
+                if community_obj:
+                    community_name_for_search = community_obj.name
+                    location = f"{community_obj.city}, {community_obj.state}" if community_obj.city and community_obj.state else location
+                    self.log(
+                        f"Backfill mode: Searching for builder '{builder_name}' specifically in community '{community_name_for_search}' ({location})",
+                        "INFO",
+                        "initialization",
+                        {"community_id": community_id_for_search, "community_name": community_name_for_search}
+                    )
+
+            # Call Claude to collect builder data with community context
             self.log(f"Calling Claude API to collect data for: {builder_name}", "INFO", "searching")
-            prompt = generate_builder_collection_prompt(builder_name, location)
+            prompt = generate_builder_collection_prompt(builder_name, location, community_name_for_search)
             collected_data = self.call_claude(prompt)
             self.log("Claude API call completed successfully", "SUCCESS", "searching")
 
