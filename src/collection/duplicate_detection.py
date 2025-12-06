@@ -438,8 +438,25 @@ def find_duplicate_builder(
                 best_match = candidate
 
         if best_match:
-            logger.info(f"Found fuzzy match with location validation for builder {name}: {best_match.name} (ID: {best_match.id}, score: {best_score:.2f})")
-            return best_match.id, best_score, "name_fuzzy_location_validated"
+            # If community_id provided, check if this builder is already linked to THIS community
+            if community_id:
+                is_in_community = db.execute(
+                    select(builder_communities).where(
+                        builder_communities.c.builder_id == best_match.id,
+                        builder_communities.c.community_id == community_id
+                    )
+                ).first()
+
+                if is_in_community:
+                    logger.info(f"Found fuzzy match with location validation for builder {name}: {best_match.name} (ID: {best_match.id}, score: {best_score:.2f}) in community {community_id}")
+                    return best_match.id, best_score, "name_fuzzy_location_validated"
+                else:
+                    logger.info(f"Found fuzzy match for {name}: {best_match.name} (ID: {best_match.id}, score: {best_score:.2f}) but in different community - allowing creation")
+                    # Not a duplicate for this community
+            else:
+                # No community context, return match
+                logger.info(f"Found fuzzy match with location validation for builder {name}: {best_match.name} (ID: {best_match.id}, score: {best_score:.2f})")
+                return best_match.id, best_score, "name_fuzzy_location_validated"
 
     logger.info(f"No duplicate found for builder: {name} in location {city}, {state} (community {community_id})")
     return None, None, None
