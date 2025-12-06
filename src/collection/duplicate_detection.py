@@ -374,17 +374,38 @@ def find_duplicate_builder(
 
             logger.warning(f"Found {len(matched_candidates)} phone matches for {normalized_phone} but none serve location {city}, {state} (community {community_id})")
 
-    # Method 5: Exact name + location match (lower confidence than Method 1 since no community link)
+    # Method 5: Exact name + location match (with community validation if provided)
     if city and state:
-        existing = db.query(BuilderProfile).filter(
+        candidates = db.query(BuilderProfile).filter(
             func.lower(BuilderProfile.name) == name.lower().strip(),
             func.lower(BuilderProfile.city) == city.lower().strip(),
             func.lower(BuilderProfile.state) == state.upper().strip()
-        ).first()
+        ).all()
 
-        if existing:
-            logger.info(f"Found exact name+location match for builder {name}: {existing.name} (ID: {existing.id})")
-            return existing.id, 0.90, "name_location_exact"
+        if candidates:
+            # If community_id provided, check if any candidate is already linked to THIS community
+            if community_id:
+                for candidate in candidates:
+                    # Check if this builder is already linked to the specific community
+                    is_in_community = db.execute(
+                        select(builder_communities).where(
+                            builder_communities.c.builder_id == candidate.id,
+                            builder_communities.c.community_id == community_id
+                        )
+                    ).first()
+
+                    if is_in_community:
+                        logger.info(f"Found exact name+location+community match for builder {name}: {candidate.name} (ID: {candidate.id}) in community {community_id}")
+                        return candidate.id, 0.90, "name_location_exact"
+
+                # If we found name+location matches but none in this community, it's NOT a duplicate
+                logger.info(f"Found {len(candidates)} name+location matches for {name} in {city}, {state} but none in community {community_id} - allowing creation")
+                # Continue to next method
+            else:
+                # No community context, return first match
+                existing = candidates[0]
+                logger.info(f"Found exact name+location match for builder {name}: {existing.name} (ID: {existing.id})")
+                return existing.id, 0.90, "name_location_exact"
 
     # Method 6: Fuzzy name matching with location + service area validation
     # Only match builders that serve the collection location
