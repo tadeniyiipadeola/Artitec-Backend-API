@@ -297,9 +297,9 @@ def get_storage_backend() -> StorageBackend:
     Get appropriate storage backend based on environment configuration.
     Checks environment variables to determine which backend to use.
     """
-    storage_type = os.getenv("STORAGE_TYPE", "local")  # "local" or "s3"
+    storage_type = os.getenv("STORAGE_TYPE", "local").upper()  # "LOCAL" or "S3"
 
-    if storage_type == "s3":
+    if storage_type == "S3":
         return S3Storage(
             bucket_name=os.getenv("S3_BUCKET_NAME", "artitec-media"),
             aws_access_key=os.getenv("AWS_ACCESS_KEY_ID"),

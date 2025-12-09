@@ -176,8 +176,8 @@ def test_model_enums():
     print("✓ MediaType enum OK")
 
     # Test StorageType
-    assert StorageType.LOCAL.value == "local"
-    assert StorageType.S3.value == "s3"
+    assert StorageType.LOCAL.value == "LOCAL"
+    assert StorageType.S3.value == "S3"
     print("✓ StorageType enum OK")
 
     # Test ModerationStatus
@@ -207,7 +207,7 @@ def test_environment():
             print(f"⚠ {var} is not set (will use default)")
 
     # Check MinIO-specific vars
-    if os.getenv('STORAGE_TYPE') == 's3':
+    if os.getenv('STORAGE_TYPE', '').upper() == 'S3':
         minio_vars = [
             'S3_ENDPOINT_URL',
             'AWS_ACCESS_KEY_ID',

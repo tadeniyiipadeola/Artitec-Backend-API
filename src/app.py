@@ -94,6 +94,7 @@ app.include_router(email_verification_router, prefix="/v1/auth", tags=["Authenti
 app.include_router(user_router, tags=["Users"])
 app.include_router(buyers.router, prefix="/v1/profiles/buyers", tags=["Buyers Profiles"])
 app.include_router(builder.router , prefix="/v1/profiles/builders", tags=["Builder Profiles"])
+app.include_router(builder.router , prefix="/v1/builders", tags=["Builder Profiles (Alias)"])  # Alias for iOS app
 app.include_router(community.router, prefix="/v1/profiles/communities", tags=["Communities Profiles"])
 app.include_router(community_admin.router, prefix="/v1/profiles/community-admins", tags=["Community Admin Profiles"])
 app.include_router(property.router, prefix="/v1/properties", tags=["Properties Profiles"])

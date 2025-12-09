@@ -80,6 +80,7 @@ class BuilderProfile(Base):
     founded_year = Column(Integer, nullable=True)
     employee_count = Column(Integer, nullable=True)
     service_areas = Column(JSON, nullable=True)  # Geographic areas served
+    mission = Column(Text, nullable=True)  # Company mission statement
 
     # Review metrics
     review_count = Column(Integer, nullable=True, default=0)

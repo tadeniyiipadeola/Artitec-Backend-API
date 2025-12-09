@@ -115,10 +115,42 @@ Extract ALL available information about this community. Be thorough and capture 
      * "Master-planned community"
    - Include any other amenities not listed above
 
-7. REVIEWS & RATINGS
+7. COMMUNITY EVENTS
+   - Look for upcoming community events, activities, or gatherings
+   - Check community website events calendar, Facebook events, HOA newsletters
+   - For each event, extract:
+     * Event title/name
+     * Event description
+     * Event date and time (start_at)
+     * Event end date and time (end_at, if available)
+     * Event location within the community
+     * Whether event is public or residents-only (is_public: true/false)
+   - Common event types to look for:
+     * Holiday celebrations (Fourth of July, Halloween, Christmas)
+     * Community gatherings (block parties, movie nights, food trucks)
+     * Fitness classes or activities
+     * Kids activities and summer camps
+     * Pool parties or water park events
+     * Seasonal festivals or markets
+   - Only include events with confirmed dates (skip general recurring activities without specific dates)
+
+8. REVIEWS & RATINGS
    - Overall community rating
    - Number of reviews
    - Common feedback themes
+
+9. IMAGES & MEDIA
+   - Community photos/images (extract ALL image URLs from the community website)
+   - Look for:
+     * Gallery pages or photo sections
+     * Amenity photos (pool, clubhouse, trails, etc.)
+     * Aerial/overview photos of the community
+     * Entrance/monument photos
+     * Model home photos
+     * Lifestyle photos (families, activities, etc.)
+   - Return URLs as an array of image URLs
+   - Prioritize high-quality/high-resolution images
+   - Include captions or descriptions if available
 
 ## Output Format:
 Return a JSON object with "communities" array:
@@ -167,6 +199,7 @@ Return a JSON object with "communities" array:
       ],
       "rating": 4.5,
       "review_count": 100,
+      "images": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"],
       "confidence": {{
         "overall": 0.85
       }},
@@ -289,10 +322,42 @@ Extract ALL available information about this community. Be thorough and capture 
      * "Master-planned community"
    - Include any other amenities not listed above
 
-7. REVIEWS & RATINGS
+7. COMMUNITY EVENTS
+   - Look for upcoming community events, activities, or gatherings
+   - Check community website events calendar, Facebook events, HOA newsletters
+   - For each event, extract:
+     * Event title/name
+     * Event description
+     * Event date and time (start_at)
+     * Event end date and time (end_at, if available)
+     * Event location within the community
+     * Whether event is public or residents-only (is_public: true/false)
+   - Common event types to look for:
+     * Holiday celebrations (Fourth of July, Halloween, Christmas)
+     * Community gatherings (block parties, movie nights, food trucks)
+     * Fitness classes or activities
+     * Kids activities and summer camps
+     * Pool parties or water park events
+     * Seasonal festivals or markets
+   - Only include events with confirmed dates (skip general recurring activities without specific dates)
+
+8. REVIEWS & RATINGS
    - Overall community rating
    - Number of reviews
    - Common feedback themes
+
+9. IMAGES & MEDIA
+   - Community photos/images (extract ALL image URLs from the community website)
+   - Look for:
+     * Gallery pages or photo sections
+     * Amenity photos (pool, clubhouse, trails, etc.)
+     * Aerial/overview photos of the community
+     * Entrance/monument photos
+     * Model home photos
+     * Lifestyle photos (families, activities, etc.)
+   - Return URLs as an array of image URLs
+   - Prioritize high-quality/high-resolution images
+   - Include captions or descriptions if available
 
 ## Output Format:
 Return data as structured JSON:
@@ -327,6 +392,16 @@ Return data as structured JSON:
   "middle_school": "string",
   "high_school": "string",
   "amenities": ["array", "of", "amenities"],
+  "events": [
+    {{
+      "title": "string",
+      "description": "string",
+      "start_at": "2024-07-04T18:00:00",
+      "end_at": "2024-07-04T22:00:00",
+      "location": "string (location within community)",
+      "is_public": true
+    }}
+  ],
   "builders": [
     {{
       "name": "string",
@@ -336,6 +411,7 @@ Return data as structured JSON:
   ],
   "rating": number,
   "review_count": number,
+  "images": ["https://example.com/image1.jpg", "https://example.com/image2.jpg"],
   "confidence": {{
     "overall": 0.0-1.0,
     "field_confidence": {{
@@ -349,6 +425,7 @@ IMPORTANT:
 - Only return data you can verify from web sources
 - Include confidence scores for each field
 - List all source URLs where data was found
+- Extract as many image URLs as possible from the community website
 - If a field is not found, omit it or set to null
 """
 
@@ -496,6 +573,7 @@ Extract ALL available information about this builder. Be thorough and capture ev
    - Postal code (IMPORTANT: ZIP code extracted from the sales office address above. Must match the ZIP in the sales office address field)
 
 4. COMPANY DETAILS
+   - Mission statement (company mission, values, or core purpose)
    - Year founded
    - Number of employees
    - Service areas (cities/regions where they build)
@@ -532,6 +610,7 @@ Return data as structured JSON:
   "city": "string (sales office city, extracted from sales_office_address)",
   "state": "string (sales office state, extracted from sales_office_address)",
   "postal_code": "string (sales office ZIP, extracted from sales_office_address)",
+  "mission": "string (company mission statement)",
   "founded_year": number,
   "employee_count": number,
   "service_areas": ["array", "of", "locations"],

@@ -4,6 +4,7 @@ Community Collector Service
 Collects data about residential communities.
 """
 import logging
+import asyncio
 import re
 from datetime import datetime
 from typing import Dict, Any, Optional, List
@@ -14,6 +15,7 @@ from model.collection import CollectionJob
 from .base_collector import BaseCollector
 from .prompts import generate_community_collection_prompt
 from .status_management import ImprovedCommunityStatusManager
+from src.media_scraper import MediaScraper
 
 logger = logging.getLogger(__name__)
 
@@ -422,6 +424,9 @@ class CommunityCollector(BaseCollector):
                         {"communities_created": new_communities}
                     )
 
+                    # Auto-scrape media for communities (area discovery mode)
+                    self._scrape_community_media()
+
                     # PHASE 2: Builder discovery is now DISABLED during initial collection
                     # Builder jobs will be created AFTER communities are approved by admin
                     # This prevents wasting resources on communities that may be rejected
@@ -474,6 +479,9 @@ class CommunityCollector(BaseCollector):
                 try:
                     self.log("Entering single community mode", "INFO", "parsing")
 
+                    # Store collected_data for media scraping later
+                    self.latest_collected_data = collected_data
+
                     # Process collected data
                     if self.community:
                         # Update existing community
@@ -509,6 +517,9 @@ class CommunityCollector(BaseCollector):
                         self.log("Updating community activity status", "INFO", "saving")
                         self.status_manager.update_community_activity(self.community.id)
                         self.status_manager.update_availability_from_inventory(self.community.id)
+
+                    # Auto-scrape media for single community
+                    self._scrape_community_media()
 
                     # Update job results
                     self.update_job_status(
@@ -1203,3 +1214,261 @@ class CommunityCollector(BaseCollector):
         self.log(f"Created {jobs_created} builder collection jobs", "SUCCESS", "matching",
                 {"jobs_created": jobs_created})
         return len(builders)
+
+    def _scrape_community_media(self):
+        """
+        Automatically scrape media for communities that have intro_video_url or amenity galleries.
+
+        This runs after community collection to download and store images
+        from the URLs collected during the community scraping process.
+        """
+        try:
+            # Determine which communities to process
+            if self.community:
+                # Single community mode
+                communities_to_process = [self.community]
+            else:
+                # Area discovery mode - get all communities from current job
+                # Get recently created communities (within last hour to avoid processing old ones)
+                from datetime import datetime, timedelta
+                one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+
+                communities_to_process = self.db.query(Community).filter(
+                    Community.created_at >= one_hour_ago
+                ).all()
+
+            if not communities_to_process:
+                self.log(
+                    "No communities found to scrape media for",
+                    "INFO",
+                    "media_scraping"
+                )
+                return
+
+            self.log(
+                f"Starting media scraping for {len(communities_to_process)} communities",
+                "INFO",
+                "media_scraping",
+                {"communities_count": len(communities_to_process)}
+            )
+
+            # Initialize media scraper
+            scraper = MediaScraper(db=self.db, uploaded_by="COLLECTOR")
+
+            total_scraped = 0
+            total_errors = 0
+
+            # Process each community
+            for community in communities_to_process:
+                community_name = community.name or f"Community {community.id}"
+                urls_to_scrape = []
+
+                # First, check if we have latest_collected_data from this job (for update jobs)
+                if hasattr(self, 'latest_collected_data') and self.latest_collected_data:
+                    collected_data = self.latest_collected_data
+
+                    # Log what fields are in collected data
+                    self.log(
+                        f"Collected data fields for {community_name}: {list(collected_data.keys())}",
+                        "DEBUG",
+                        "media_scraping"
+                    )
+
+                    # Log the images field value specifically
+                    if 'images' in collected_data:
+                        self.log(
+                            f"Images field value for {community_name}: {collected_data['images']}",
+                            "INFO",
+                            "media_scraping"
+                        )
+
+                    # Look for common image field patterns
+                    image_fields = [
+                        'images', 'image_urls', 'photos', 'photo_urls', 'gallery',
+                        'media_urls', 'cover_image', 'header_image', 'banner_image',
+                        'thumbnail', 'thumbnails'
+                    ]
+
+                    for field in image_fields:
+                        if field in collected_data:
+                            value = collected_data[field]
+                            # Handle list of URLs
+                            if isinstance(value, list):
+                                for url in value:
+                                    if url and isinstance(url, str):
+                                        urls_to_scrape.append({
+                                            'url': url,
+                                            'field': 'gallery',
+                                            'description': f'From {field}'
+                                        })
+                            # Handle single URL string
+                            elif isinstance(value, str) and value:
+                                urls_to_scrape.append({
+                                    'url': value,
+                                    'field': 'cover' if 'cover' in field or 'header' in field or 'banner' in field else 'gallery',
+                                    'description': f'From {field}'
+                                })
+                else:
+                    # Fallback: check collection changes for proposed data (for new entity jobs)
+                    from model.collection import CollectionChange
+                    changes = self.db.query(CollectionChange).filter(
+                        CollectionChange.entity_type == "community",
+                        CollectionChange.entity_id == community.id,
+                        CollectionChange.is_new_entity == True,
+                        CollectionChange.proposed_entity_data.isnot(None)
+                    ).all()
+
+                    # Extract image URLs from proposed data
+                    for change in changes:
+                        if change.proposed_entity_data:
+                            proposed_data = change.proposed_entity_data
+
+                            # Debug: Log what fields are in proposed data
+                            self.log(
+                                f"Proposed data fields for {community_name}: {list(proposed_data.keys())}",
+                                "DEBUG",
+                                "media_scraping"
+                            )
+
+                            # Look for common image field patterns
+                            image_fields = [
+                                'images', 'image_urls', 'photos', 'photo_urls', 'gallery',
+                                'media_urls', 'cover_image', 'header_image', 'banner_image',
+                                'thumbnail', 'thumbnails'
+                            ]
+
+                            for field in image_fields:
+                                if field in proposed_data:
+                                    value = proposed_data[field]
+                                    # Handle list of URLs
+                                    if isinstance(value, list):
+                                        for url in value:
+                                            if url and isinstance(url, str):
+                                                urls_to_scrape.append({
+                                                    'url': url,
+                                                    'field': 'gallery',
+                                                    'description': f'From {field}'
+                                                })
+                                    # Handle single URL string
+                                    elif isinstance(value, str) and value:
+                                        urls_to_scrape.append({
+                                            'url': value,
+                                            'field': 'cover' if 'cover' in field or 'header' in field or 'banner' in field else 'gallery',
+                                            'description': f'From {field}'
+                                        })
+
+                # Collect intro video URL (if it's actually an image URL)
+                if community.intro_video_url:
+                    # Check if it's an image URL (not a YouTube/Vimeo embed)
+                    url_lower = community.intro_video_url.lower()
+                    if any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                        urls_to_scrape.append({
+                            'url': community.intro_video_url,
+                            'field': 'cover',
+                            'description': 'Cover image'
+                        })
+
+                # Collect amenity gallery images
+                if hasattr(community, 'amenities'):
+                    for amenity in community.amenities:
+                        if amenity.gallery and isinstance(amenity.gallery, list):
+                            for img_url in amenity.gallery:
+                                if img_url:
+                                    urls_to_scrape.append({
+                                        'url': img_url,
+                                        'field': 'gallery',
+                                        'description': f'Amenity: {amenity.name}'
+                                    })
+
+                if not urls_to_scrape:
+                    self.log(
+                        f"No media URLs found for: {community_name}",
+                        "INFO",
+                        "media_scraping",
+                        {"community_id": community.id, "community_name": community_name}
+                    )
+                    continue
+
+                self.log(
+                    f"Scraping {len(urls_to_scrape)} images for: {community_name}",
+                    "INFO",
+                    "media_scraping",
+                    {
+                        "community_id": community.id,
+                        "community_name": community_name,
+                        "media_count": len(urls_to_scrape)
+                    }
+                )
+
+                # Download each media URL
+                for idx, media_info in enumerate(urls_to_scrape, 1):
+                    try:
+                        url = media_info['url']
+                        entity_field = media_info['field']
+                        caption = media_info['description']
+
+                        # Run async function in sync context
+                        media = asyncio.run(scraper.download_from_url(
+                            media_url=url,
+                            entity_type="community",
+                            entity_id=community.id,
+                            entity_field=entity_field,
+                            caption=caption
+                        ))
+
+                        if media:
+                            total_scraped += 1
+                            self.log(
+                                f"✅ Downloaded image {idx}/{len(urls_to_scrape)} for {community_name}",
+                                "SUCCESS",
+                                "media_scraping",
+                                {
+                                    "community_id": community.id,
+                                    "media_id": media.id,
+                                    "media_public_id": media.public_id,
+                                    "url": url,
+                                    "field": entity_field
+                                }
+                            )
+                        else:
+                            self.log(
+                                f"⚠️ No media returned for {url}",
+                                "WARNING",
+                                "media_scraping",
+                                {"community_id": community.id, "url": url}
+                            )
+
+                    except Exception as e:
+                        total_errors += 1
+                        self.log(
+                            f"❌ Failed to download image {idx}/{len(urls_to_scrape)}: {str(e)}",
+                            "ERROR",
+                            "media_scraping",
+                            {
+                                "community_id": community.id,
+                                "community_name": community_name,
+                                "url": media_info['url'],
+                                "error": str(e)
+                            }
+                        )
+
+            self.log(
+                f"Media scraping completed: {total_scraped} images downloaded, {total_errors} errors",
+                "SUCCESS",
+                "media_scraping",
+                {
+                    "total_scraped": total_scraped,
+                    "total_errors": total_errors,
+                    "communities_processed": len(communities_to_process)
+                }
+            )
+
+        except Exception as e:
+            self.log(
+                f"Media scraping failed: {str(e)}",
+                "ERROR",
+                "media_scraping",
+                {"error": str(e), "error_type": type(e).__name__}
+            )
+            # Don't raise - media scraping is optional, shouldn't fail the entire job
+            logger.error(f"Media scraping failed: {str(e)}", exc_info=True)

@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  # Production API
+  api:
+    image: ghcr.io/tadeniyiipadeola/artitec-backend:latest
+    container_name: artitec-api-prod
+    env_file:
+      - .env.prod  # Use production environment file
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - artitec-network
+
+  # Watchtower for auto-updates
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower-prod
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=300  # Check every 5 minutes
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - REPO_USER=${GHCR_USERNAME}
+      - REPO_PASS=${GHCR_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - artitec-network
+
+networks:
+  artitec-network:
+    driver: bridge

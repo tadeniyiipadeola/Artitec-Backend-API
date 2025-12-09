@@ -71,6 +71,29 @@ class ScrapeResponse(BaseModel):
     errors: List[str]
     message: str
 
+    class Config:
+        populate_by_name = True
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "mediaCount": 5,
+                "media": [],
+                "errors": [],
+                "message": "Successfully scraped 5 media items"
+            }
+        }
+
+    def model_dump(self, **kwargs):
+        """Override to use camelCase for JSON serialization"""
+        data = super().model_dump(**kwargs)
+        return {
+            "success": data["success"],
+            "mediaCount": data["media_count"],
+            "media": data["media"],
+            "errors": data["errors"],
+            "message": data["message"]
+        }
+
 
 class BatchDownloadRequest(BaseModel):
     """Request to download multiple media URLs"""

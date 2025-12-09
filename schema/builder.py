@@ -39,6 +39,21 @@ class BuilderProfileBase(BaseModel):
     bio: Optional[str] = None
     socials: Optional[dict] = None  # {"linkedin": "...", "x": "..."}
 
+    # Business details
+    founded_year: Optional[int] = None  # Year company was founded
+    employee_count: Optional[int] = None  # Number of employees
+    price_range_min: Optional[int] = None  # Minimum home price
+    price_range_max: Optional[int] = None  # Maximum home price
+    headquarters_address: Optional[str] = None  # Main office address
+    sales_office_address: Optional[str] = None  # Sales office address
+    mission: Optional[str] = None  # Company mission statement
+    service_areas: Optional[List[str]] = None  # Geographic service areas
+
+    # Aggregated credentials (computed from BuilderCredential table)
+    licenses: Optional[List[str]] = None  # List of license names
+    certifications: Optional[List[str]] = None  # List of certification names
+    memberships: Optional[List[str]] = None  # List of membership names
+
 
 # ------------------------------------------------------------
 # Create / Update models

@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  # Backend API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: artitec-api-local
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount code for live reloading during development
+      - .:/app
+      - ./uploads:/app/uploads
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - db
+    networks:
+      - artitec-network
+
+  # MySQL Database (optional - for local development)
+  db:
+    image: mysql:8.0
+    container_name: artitec-db-local
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: Dev
+      MYSQL_PASSWORD: Password1!
+    ports:
+      - "3307:3306"  # Use 3307 to avoid conflicts with local MySQL
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - artitec-network
+
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: artitec-minio-local
+    environment:
+      MINIO_ROOT_USER: artitec-admin
+      MINIO_ROOT_PASSWORD: ArtitecMinIO2024!SecurePassword
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    networks:
+      - artitec-network
+
+volumes:
+  mysql-data:
+  minio-data:
+
+networks:
+  artitec-network:
+    driver: bridge

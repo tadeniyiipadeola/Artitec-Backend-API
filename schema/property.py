@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, date
+from typing import List, Optional, Any
 
-from pydantic import BaseModel, Field, HttpUrl, conint, confloat, constr
+from pydantic import BaseModel, Field, HttpUrl, conint, confloat, constr, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ class PropertyBase(BaseModel):
     address2: Optional[constr(strip_whitespace=True, max_length=255)] = None
     city: constr(strip_whitespace=True, min_length=1, max_length=120)
     state: constr(strip_whitespace=True, min_length=2, max_length=120)
-    postal_code: constr(strip_whitespace=True, min_length=3, max_length=20)
+    postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None  # Optional for imported data
     latitude: Optional[confloat(ge=-90, le=90)] = Field(default=None)
     longitude: Optional[confloat(ge=-180, le=180)] = Field(default=None)
 
@@ -249,14 +249,25 @@ class PropertyOut(PropertyBase):
     """Response model for a property."""
 
     id: int
-    owner_id: int
+    owner_id: Optional[int] = None  # Allow None for imported properties without owner
 
     created_at: datetime
     updated_at: Optional[datetime] = None
     listed_at: Optional[datetime] = None
 
+    @field_validator('estimated_completion', mode='before')
+    @classmethod
+    def convert_date_to_string(cls, v: Any) -> Optional[str]:
+        """Convert date objects to ISO format strings."""
+        if v is None:
+            return None
+        if isinstance(v, date):
+            return v.isoformat()
+        return v
+
     class Config:
         orm_mode = True
+        from_attributes = True
 
 
 # ---------------------------------------------------------------------------

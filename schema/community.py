@@ -25,7 +25,7 @@ class CommunityAmenityBase(BaseModel):
 
 
 class CommunityAmenityCreate(CommunityAmenityBase):
-    community_id: Optional[int] = None  # may be injected by route
+    community_id: Optional[str] = None  # may be injected by route (public community_id)
 
 
 class CommunityAmenityUpdate(BaseModel):
@@ -35,7 +35,7 @@ class CommunityAmenityUpdate(BaseModel):
 
 class CommunityAmenityOut(CommunityAmenityBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)
@@ -54,7 +54,7 @@ class CommunityEventBase(BaseModel):
 
 
 class CommunityEventCreate(CommunityEventBase):
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None  # Public community ID
 
 
 class CommunityEventUpdate(BaseModel):
@@ -68,7 +68,7 @@ class CommunityEventUpdate(BaseModel):
 
 class CommunityEventOut(CommunityEventBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
     created_at: datetime
     updated_at: datetime
 
@@ -88,7 +88,7 @@ class CommunityBuilderCardBase(BaseModel):
 
 
 class CommunityBuilderCardCreate(CommunityBuilderCardBase):
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None  # Public community ID
 
 
 class CommunityBuilderCardUpdate(BaseModel):
@@ -101,7 +101,7 @@ class CommunityBuilderCardUpdate(BaseModel):
 
 class CommunityBuilderCardOut(CommunityBuilderCardBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)
@@ -118,7 +118,7 @@ class CommunityAdminBase(BaseModel):
 
 
 class CommunityAdminCreate(CommunityAdminBase):
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None  # Public community ID
 
 
 class CommunityAdminUpdate(BaseModel):
@@ -130,7 +130,7 @@ class CommunityAdminUpdate(BaseModel):
 
 class CommunityAdminOut(CommunityAdminBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)
@@ -148,7 +148,7 @@ class CommunityAwardBase(BaseModel):
 
 
 class CommunityAwardCreate(CommunityAwardBase):
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None  # Public community ID
 
 
 class CommunityAwardUpdate(BaseModel):
@@ -161,7 +161,7 @@ class CommunityAwardUpdate(BaseModel):
 
 class CommunityAwardOut(CommunityAwardBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)
@@ -180,7 +180,7 @@ class CommunityTopicBase(BaseModel):
 
 
 class CommunityTopicCreate(CommunityTopicBase):
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None  # Public community ID
 
 
 class CommunityTopicUpdate(BaseModel):
@@ -194,7 +194,7 @@ class CommunityTopicUpdate(BaseModel):
 
 class CommunityTopicOut(CommunityTopicBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)
@@ -210,7 +210,7 @@ class CommunityPhaseBase(BaseModel):
 
 
 class CommunityPhaseCreate(CommunityPhaseBase):
-    community_id: Optional[int] = None
+    community_id: Optional[str] = None  # Public community ID
 
 
 class CommunityPhaseUpdate(BaseModel):
@@ -221,7 +221,7 @@ class CommunityPhaseUpdate(BaseModel):
 
 class CommunityPhaseOut(CommunityPhaseBase):
     id: int
-    community_id: int
+    community_id: str  # Public community ID (CMY-XXX)
 
     if _HAS_V2:
         model_config = ConfigDict(from_attributes=True)
@@ -242,6 +242,8 @@ class CommunityBase(BaseModel):
     city: Optional[constr(strip_whitespace=True, max_length=255)] = None
     state: Optional[constr(strip_whitespace=True, max_length=64)] = None
     postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None
+    latitude: Optional[float] = None  # Latitude coordinate for mapping
+    longitude: Optional[float] = None  # Longitude coordinate for mapping
 
     # Contact Information
     phone: Optional[constr(strip_whitespace=True, max_length=32)] = None
@@ -302,6 +304,8 @@ class CommunityUpdate(BaseModel):
     city: Optional[constr(strip_whitespace=True, max_length=255)] = None
     state: Optional[constr(strip_whitespace=True, max_length=64)] = None
     postal_code: Optional[constr(strip_whitespace=True, max_length=20)] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     # Contact Information
     phone: Optional[constr(strip_whitespace=True, max_length=32)] = None
@@ -357,6 +361,10 @@ class CommunityOut(CommunityBase):
     created_at: datetime
     updated_at: datetime
 
+    # Media URLs (populated from media table)
+    avatar_url: Optional[str] = Field(None, alias="avatarUrl")
+    cover_url: Optional[str] = Field(None, alias="coverUrl")
+
     # Nested relationships (1-to-many)
     amenities: List[CommunityAmenityOut] = Field(default_factory=list)
     events: List[CommunityEventOut] = Field(default_factory=list)
@@ -370,7 +378,8 @@ class CommunityOut(CommunityBase):
     builder_ids: List[int] = Field(default_factory=list)
 
     if _HAS_V2:
-        model_config = ConfigDict(from_attributes=True)
+        model_config = ConfigDict(from_attributes=True, populate_by_name=True)
     else:
         class Config:
             orm_mode = True
+            allow_population_by_field_name = True

@@ -238,8 +238,8 @@ def process_and_save_media(
 
     # Determine storage type
     import os
-    storage_type_value = os.getenv("STORAGE_TYPE", "local")
-    storage_type_enum = StorageType.S3 if storage_type_value == "s3" else StorageType.LOCAL
+    storage_type_value = os.getenv("STORAGE_TYPE", "local").upper()
+    storage_type_enum = StorageType.S3 if storage_type_value == "S3" else StorageType.LOCAL
 
     # Create media record
     media = Media(

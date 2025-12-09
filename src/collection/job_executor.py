@@ -585,3 +585,76 @@ def create_bulk_builder_update_jobs(
         "builders_processed": len(builders),
         "job_ids": job_ids
     }
+
+
+def create_bulk_community_update_jobs(
+    db: Session,
+    priority: int = 5,
+    initiated_by: Optional[str] = None,
+    data_source_filter: Optional[str] = None
+) -> Dict:
+    """
+    Create community update jobs for all existing communities in the database.
+
+    This fetches all communities and creates an update job for each one to refresh
+    their data and automatically scrape media.
+
+    Args:
+        db: Database session
+        priority: Priority for created jobs (default: 5)
+        initiated_by: User ID who initiated the job
+        data_source_filter: Optional filter for communities by data_source
+                          (e.g., 'collected', 'manual'). If None, updates all communities.
+
+    Returns:
+        Dictionary containing:
+            - jobs_created: Number of jobs created
+            - communities_processed: Total communities found and processed
+            - job_ids: List of created job IDs
+    """
+    from model.profiles.community import Community
+
+    # Query all communities, optionally filtering by data_source
+    query = db.query(Community)
+
+    if data_source_filter:
+        query = query.filter(Community.data_source == data_source_filter)
+
+    communities = query.all()
+
+    job_ids = []
+
+    for community in communities:
+        # Create community update job using the community's ID
+        # The collector will use the existing community data and scrape media
+        job = create_community_collection_job(
+            db=db,
+            community_id=community.id,  # Passing community_id makes it an "update" job
+            community_name=community.name,  # Also pass name for reference
+            location=f"{community.city}, {community.state}" if community.city and community.state else None,
+            initiated_by=initiated_by
+        )
+
+        # Override priority if specified
+        if priority != 5:
+            job.priority = priority
+            db.commit()
+            db.refresh(job)
+
+        job_ids.append(job.job_id)
+
+        logger.info(
+            f"Created update job for community '{community.name}' "
+            f"(ID: {community.id}, Job: {job.job_id})"
+        )
+
+    logger.info(
+        f"Bulk community update complete: Created {len(job_ids)} jobs "
+        f"for {len(communities)} communities (media scraping will run automatically)"
+    )
+
+    return {
+        "jobs_created": len(job_ids),
+        "communities_processed": len(communities),
+        "job_ids": job_ids
+    }

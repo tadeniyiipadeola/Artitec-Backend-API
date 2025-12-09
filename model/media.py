@@ -17,8 +17,8 @@ class MediaType(enum.Enum):
 
 class StorageType(enum.Enum):
     """Storage type enum"""
-    LOCAL = "local"
-    S3 = "s3"
+    LOCAL = "LOCAL"
+    S3 = "S3"
 
 
 class ModerationStatus(enum.Enum):
@@ -84,7 +84,7 @@ class Media(Base):
     uploaded_by = Column(String(30), nullable=False, comment="User public_id who uploaded this")
     is_public = Column(Boolean, nullable=False, default=True, comment="Whether publicly accessible")
     is_approved = Column(Boolean, nullable=False, default=True, comment="Whether approved to keep (scraped media starts as False)")
-    moderation_status = Column(SQLEnum(ModerationStatus), nullable=False, default=ModerationStatus.APPROVED, comment="Moderation status for content review")
+    moderation_status = Column(SQLEnum(ModerationStatus, values_callable=lambda x: [e.value for e in x]), nullable=False, default=ModerationStatus.APPROVED, comment="Moderation status for content review")
 
     # Timestamps
     created_at = Column(DateTime, nullable=False, server_default=func.now())

@@ -92,9 +92,9 @@ def make_full_url(url: Optional[str], base_url: str) -> Optional[str]:
         return url
 
     # Check storage type from environment
-    storage_type = os.getenv("STORAGE_TYPE", "local")
+    storage_type = os.getenv("STORAGE_TYPE", "local").upper()
 
-    if storage_type == "s3":
+    if storage_type == "S3":
         # Use S3 public base URL for MinIO/S3 storage
         s3_public_base_url = os.getenv("S3_PUBLIC_BASE_URL")
         if s3_public_base_url:

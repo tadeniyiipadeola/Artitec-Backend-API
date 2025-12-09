@@ -219,14 +219,71 @@ def list_builder_profiles(
     return [BuilderProfileOut.model_validate(r) for r in rows]
 
 
+@router.get("/by-id/{builder_id}", response_model=BuilderProfileOut)
+def get_builder_by_id(
+    *,
+    db: Session = Depends(get_db),
+    builder_id: int,
+    include: Optional[str] = Query(None, description="Comma-separated includes: properties,communities,credentials"),
+    current_user=Depends(get_current_user_optional),
+):
+    """
+    Get builder profile by builder ID (not user_id).
+    Use include=credentials to populate licenses, certifications, and memberships.
+    """
+    print(f"\n🔍 Fetching builder by ID: {builder_id}")
+
+    includes = _parse_include(include)
+    query = db.query(BuilderModel)
+    query = _apply_includes(query, includes)
+
+    obj = query.filter(BuilderModel.id == builder_id).first()
+    if not obj:
+        print(f"❌ Builder not found with ID: {builder_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
+
+    print(f"✅ Found builder: {obj.name}")
+
+    # Convert to dict to add computed fields
+    builder_dict = BuilderProfileOut.model_validate(obj).model_dump()
+
+    # Load credentials if requested
+    if "credentials" in includes:
+        print("📋 Loading credentials...")
+        credentials = (
+            db.query(BuilderCredentialModel)
+            .filter(BuilderCredentialModel.builder_id == builder_id)
+            .all()
+        )
+
+        # Separate by type
+        licenses = [c.name for c in credentials if c.credential_type == "license"]
+        certifications = [c.name for c in credentials if c.credential_type == "certification"]
+        memberships = [c.name for c in credentials if c.credential_type == "membership"]
+
+        builder_dict["licenses"] = licenses
+        builder_dict["certifications"] = certifications
+        builder_dict["memberships"] = memberships
+
+        print(f"   - Licenses: {len(licenses)}")
+        print(f"   - Certifications: {len(certifications)}")
+        print(f"   - Memberships: {len(memberships)}")
+
+    return BuilderProfileOut(**builder_dict)
+
+
 @router.get("/{user_id}", response_model=BuilderProfileOut)
 def get_builder_profile(
     *,
     db: Session = Depends(get_db),
     user_id: str,
-    include: Optional[str] = Query(None, description="Comma-separated includes: properties,communities"),
+    include: Optional[str] = Query(None, description="Comma-separated includes: properties,communities,credentials"),
     current_user=Depends(get_current_user_optional),
 ):
+    """
+    Get builder profile by user_id.
+    Use include=credentials to populate licenses, certifications, and memberships.
+    """
     user = _ensure_user(db, user_id)
     uid = user.user_id
 
@@ -238,7 +295,27 @@ def get_builder_profile(
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder profile not found")
 
-    return BuilderProfileOut.model_validate(obj)
+    # Convert to dict to add computed fields
+    builder_dict = BuilderProfileOut.model_validate(obj).model_dump()
+
+    # Load credentials if requested
+    if "credentials" in includes:
+        credentials = (
+            db.query(BuilderCredentialModel)
+            .filter(BuilderCredentialModel.builder_id == obj.id)
+            .all()
+        )
+
+        # Separate by type
+        licenses = [c.name for c in credentials if c.credential_type == "license"]
+        certifications = [c.name for c in credentials if c.credential_type == "certification"]
+        memberships = [c.name for c in credentials if c.credential_type == "membership"]
+
+        builder_dict["licenses"] = licenses
+        builder_dict["certifications"] = certifications
+        builder_dict["memberships"] = memberships
+
+    return BuilderProfileOut(**builder_dict)
 
 
 @router.post("/{user_id}", response_model=BuilderProfileOut, status_code=status.HTTP_201_CREATED)

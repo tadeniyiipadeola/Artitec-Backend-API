@@ -166,6 +166,8 @@ def get_community_for_user(
         )
 
     # Get the community with optional includes
+    from model.media import Media
+
     includes = _parse_include(include)
     query = db.query(CommunityModel)
     query = _apply_includes(query, includes)
@@ -174,7 +176,26 @@ def get_community_for_user(
     if not community:
         raise HTTPException(status_code=404, detail="Community not found")
 
-    return CommunityOut.model_validate(community)
+    # Get avatar and cover URLs from media table
+    avatar_media = db.query(Media).filter(
+        Media.entity_type == 'community',
+        Media.entity_id == community.id,
+        Media.entity_field == 'avatar'
+    ).first()
+
+    cover_media = db.query(Media).filter(
+        Media.entity_type == 'community',
+        Media.entity_id == community.id,
+        Media.entity_field == 'cover'
+    ).first()
+
+    # Convert to dict and add media URLs
+    community_dict = community.__dict__.copy()
+    community_dict['avatar_url'] = avatar_media.medium_url if avatar_media else None
+    # Use medium_url for cover if available, fallback to original_url
+    community_dict['cover_url'] = (cover_media.medium_url or cover_media.original_url) if cover_media else None
+
+    return CommunityOut.model_validate(community_dict)
 
 
 @router.get("/public/{public_id}", response_model=CommunityOut)
@@ -197,7 +218,7 @@ def get_community_by_public_id(
     return CommunityOut.model_validate(community)
 
 
-@router.get("/{community_id}", response_model=CommunityOut)
+@router.get("/{community_id}", response_model=CommunityOut, response_model_by_alias=True)
 def get_community(
     *,
     db: Session = Depends(get_db),
@@ -205,13 +226,35 @@ def get_community(
     include: Optional[str] = Query(None),
     current_user=Depends(get_current_user_optional),
 ):
+    from model.media import Media
+
     includes = _parse_include(include)
     query = db.query(CommunityModel)
     query = _apply_includes(query, includes)
     obj = query.filter(CommunityModel.id == community_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Community not found")
-    return CommunityOut.model_validate(obj)
+
+    # Get avatar and cover URLs from media table
+    avatar_media = db.query(Media).filter(
+        Media.entity_type == 'community',
+        Media.entity_id == community_id,
+        Media.entity_field == 'avatar'
+    ).first()
+
+    cover_media = db.query(Media).filter(
+        Media.entity_type == 'community',
+        Media.entity_id == community_id,
+        Media.entity_field == 'cover'
+    ).first()
+
+    # Convert to dict and add media URLs
+    community_dict = obj.__dict__.copy()
+    community_dict['avatar_url'] = avatar_media.medium_url if avatar_media else None
+    # Use medium_url for cover if available, fallback to original_url
+    community_dict['cover_url'] = (cover_media.medium_url or cover_media.original_url) if cover_media else None
+
+    return CommunityOut.model_validate(community_dict)
 
 
 @router.post("/", response_model=CommunityOut, status_code=status.HTTP_201_CREATED)

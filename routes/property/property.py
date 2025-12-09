@@ -92,7 +92,7 @@ def list_properties(
     if has_pool is not None:
         q = q.filter(Property.has_pool == has_pool)
 
-    field, direction = sort.split("_")
+    field, direction = sort.rsplit("_", 1)
     order_col = {
         "listed_at": getattr(Property, "listed_at", getattr(Property, "created_at")),
         "price": Property.price,

@@ -145,7 +145,7 @@ class MediaConfig:
             Dictionary with storage configuration
         """
         return {
-            'storage_type': os.getenv('STORAGE_TYPE', 'local'),
+            'storage_type': os.getenv('STORAGE_TYPE', 'local').upper(),
             's3_endpoint_url': os.getenv('S3_ENDPOINT_URL', 'http://localhost:9000'),
             's3_access_key': os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin'),
             's3_secret_key': os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin'),

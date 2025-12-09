@@ -19,7 +19,7 @@ import imagehash
 import boto3
 from botocore.exceptions import ClientError
 
-from model.media import Media, MediaType
+from model.media import Media, MediaType, StorageType, ModerationStatus
 from src.media_processing import ImageProcessor, VideoProcessor
 from src.storage import get_storage_backend
 from src.id_generator import generate_public_id
@@ -54,8 +54,8 @@ class MediaScraper:
         self.session.headers.update({'User-Agent': self.USER_AGENT})
 
         # Initialize MinIO/S3 client for redundancy checking
-        self.storage_type = os.getenv("STORAGE_TYPE", "local")
-        if self.storage_type == "s3":
+        self.storage_type = os.getenv("STORAGE_TYPE", "local").upper()
+        if self.storage_type == "S3":
             self.s3_client = boto3.client(
                 's3',
                 endpoint_url=os.getenv("S3_ENDPOINT_URL"),
@@ -128,7 +128,7 @@ class MediaScraper:
 
         if existing:
             # Verify file actually exists in storage
-            if existing.storage_path and self.storage_type == "s3" and self.s3_client:
+            if existing.storage_path and self.storage_type == "S3" and self.s3_client:
                 try:
                     self.s3_client.head_object(Bucket=self.s3_bucket, Key=existing.storage_path)
                     logger.info(f"⏭️ Valid duplicate found in database: {existing.public_id}")
@@ -158,7 +158,7 @@ class MediaScraper:
 
             if existing_by_hash:
                 # Verify this duplicate's file also exists
-                if existing_by_hash.storage_path and self.storage_type == "s3" and self.s3_client:
+                if existing_by_hash.storage_path and self.storage_type == "S3" and self.s3_client:
                     try:
                         self.s3_client.head_object(Bucket=self.s3_bucket, Key=existing_by_hash.storage_path)
                         logger.info(f"⏭️ Duplicate found by perceptual hash: {existing_by_hash.public_id} (hash: {image_hash})")
@@ -189,7 +189,7 @@ class MediaScraper:
             True if file exists in MinIO, False otherwise
         """
         # Only check if using S3/MinIO storage
-        if self.storage_type != "s3" or not self.s3_client or not self.s3_bucket:
+        if self.storage_type != "S3" or not self.s3_client or not self.s3_bucket:
             return False
 
         try:
@@ -537,6 +537,7 @@ class MediaScraper:
                     caption=caption,
                     source_url=source_url,  # Store the webpage URL where this was scraped from
                     uploaded_by=self.uploaded_by,
+                    storage_type=StorageType.LOCAL,  # Explicitly set storage type
                     is_public=True,
                     is_approved=False  # Scraped media starts as unapproved, auto-deleted after 7 days if not approved
                 )
@@ -667,6 +668,7 @@ class MediaScraper:
                     caption=caption,
                     source_url=source_url,  # Store the webpage URL where this was scraped from
                     uploaded_by=self.uploaded_by,
+                    storage_type=StorageType.LOCAL,  # Explicitly set storage type
                     is_public=True,
                     is_approved=False  # Scraped media starts as unapproved, auto-deleted after 7 days if not approved
                 )
@@ -733,6 +735,7 @@ class MediaScraper:
             caption=caption,
             source_url=source_url,  # Store the webpage URL where this was scraped from
             uploaded_by=self.uploaded_by,
+            storage_type=StorageType.LOCAL,  # Explicitly set storage type
             is_public=True,
             is_approved=False  # Scraped media starts as unapproved, auto-deleted after 7 days if not approved
         )

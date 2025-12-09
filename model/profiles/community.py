@@ -86,6 +86,15 @@ class Community(Base):
     intro_video_url = Column(String(1024))
     community_website_url = Column(String(1024))
 
+    # Data Collection & Tracking
+    school_district = Column(String(255))  # School district name
+    hoa_management_company = Column(String(255))  # HOA management company
+    hoa_contact_phone = Column(String(20))  # HOA contact phone
+    hoa_contact_email = Column(String(255))  # HOA contact email
+    last_data_sync = Column(TIMESTAMP)  # Last successful data collection
+    data_source = Column(String(50), server_default='manual', nullable=False)  # Source of data: manual, collected, collected_manual
+    data_confidence = Column(Float, server_default='1.0', nullable=False)  # Confidence score for collected data
+
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(
         TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
@@ -132,9 +141,11 @@ class CommunityAmenity(Base):
     __tablename__ = "community_amenities"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False, index=True)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     gallery = Column(JSON, default=list)  # list of photo URLs
+    description = Column(Text)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(
@@ -152,11 +163,12 @@ class CommunityEvent(Base):
     __tablename__ = "community_events"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=False)
     description = Column(Text)
     location = Column(String(255))
-    start_at = Column(TIMESTAMP, nullable=False)
+    start_at = Column(TIMESTAMP, nullable=False, index=True)
     end_at = Column(TIMESTAMP)
     is_public = Column(Boolean, default=True, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
@@ -184,23 +196,33 @@ class CommunityAdmin(Base):
     __tablename__ = "community_admins"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255))
     role = Column(String(128))
     email = Column(String(255))
     phone = Column(String(64))
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
+    )
 
 
 class CommunityAward(Base):
     __tablename__ = "community_awards"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255))
     year = Column(Integer)
     issuer = Column(String(255))
     icon = Column(String(64))
     note = Column(Text)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
+    )
 
 
 class CommunityTopic(Base):
@@ -220,10 +242,15 @@ class CommunityPhase(Base):
     __tablename__ = "community_phases"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255))
     lots = Column(JSON)  # simplified representation; can expand to a dedicated table later
     map_url = Column(String(1024))
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
+    )
 
 
 class CommunityAdminLink(Base):

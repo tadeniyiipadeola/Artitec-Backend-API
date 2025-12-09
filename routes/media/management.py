@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from config.db import get_db
 from model.media import Media, MediaType
 from schema.media import (
-    MediaOut, MediaListOut, MediaDeleteResponse,
+    MediaOut, MediaListOut, MediaDeleteResponse, MediaUpdateRequest,
     EntityType, EntityField
 )
 from config.security import get_current_user
@@ -86,9 +86,9 @@ def make_full_url(url: Optional[str], base_url: str) -> Optional[str]:
         return url
 
     # Check storage type from environment
-    storage_type = os.getenv("STORAGE_TYPE", "local")
+    storage_type = os.getenv("STORAGE_TYPE", "local").upper()
 
-    if storage_type == "s3":
+    if storage_type == "S3":
         # Use S3 public base URL for MinIO/S3 storage
         s3_public_base_url = os.getenv("S3_PUBLIC_BASE_URL")
         if s3_public_base_url:
@@ -134,10 +134,23 @@ def validate_media_exists(media: Media) -> bool:
 
 
 # Helper to convert Media to MediaOut with profile ID
-def media_to_out(db: Session, media: Media) -> MediaOut:
-    """Convert Media ORM object to MediaOut schema with entity_profile_id populated"""
+def media_to_out(db: Session, media: Media, preferred_size: str = "medium") -> MediaOut:
+    """
+    Convert Media ORM object to MediaOut schema with entity_profile_id populated.
+
+    Args:
+        db: Database session
+        media: Media ORM object
+        preferred_size: Preferred image size ('thumbnail', 'medium', 'large', 'original')
+    """
     # Get base URL from environment for converting old relative URLs
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
+
+    # Build full URLs
+    original_url = make_full_url(media.original_url, base_url)
+    thumbnail_url = make_full_url(media.thumbnail_url, base_url)
+    medium_url = make_full_url(media.medium_url, base_url)
+    large_url = make_full_url(media.large_url, base_url)
 
     media_dict = {
         "id": media.id,
@@ -150,10 +163,10 @@ def media_to_out(db: Session, media: Media) -> MediaOut:
         "width": media.width,
         "height": media.height,
         "duration": media.duration,
-        "original_url": make_full_url(media.original_url, base_url),
-        "thumbnail_url": make_full_url(media.thumbnail_url, base_url),
-        "medium_url": make_full_url(media.medium_url, base_url),
-        "large_url": make_full_url(media.large_url, base_url),
+        "original_url": original_url,
+        "thumbnail_url": thumbnail_url,
+        "medium_url": medium_url,
+        "large_url": large_url,
         "video_processed_url": make_full_url(media.video_processed_url, base_url),
         "entity_type": media.entity_type,
         "entity_id": media.entity_id,
@@ -173,7 +186,7 @@ def media_to_out(db: Session, media: Media) -> MediaOut:
 
 
 # Access control helper
-def check_media_access(media: Media, current_user: dict, db: Session) -> bool:
+def check_media_access(media: Media, current_user, db: Session) -> bool:
     """
     Check if user can access/modify this media.
 
@@ -181,7 +194,7 @@ def check_media_access(media: Media, current_user: dict, db: Session) -> bool:
         True if user has access, False otherwise
     """
     # Owner can always access
-    if media.uploaded_by == current_user['public_id']:
+    if media.uploaded_by == current_user.user_id:
         return True
 
     # Check if user is admin of the entity
@@ -189,22 +202,22 @@ def check_media_access(media: Media, current_user: dict, db: Session) -> bool:
         from model.profiles.community import Community
         community = db.query(Community).filter(Community.id == media.entity_id).first()
         if community and hasattr(community, 'admin_id'):
-            return community.admin_id == current_user['public_id']
+            return community.admin_id == current_user.user_id
 
     elif media.entity_type == "builder":
         from model.profiles.builder import BuilderProfile
         builder = db.query(BuilderProfile).filter(BuilderProfile.id == media.entity_id).first()
         if builder and hasattr(builder, 'user_id'):
-            return builder.user_id == current_user['public_id']
+            return builder.user_id == current_user.user_id
 
     # Admin users can access everything (if you have a role system)
-    if current_user.get('role') == 'admin':
+    if hasattr(current_user, 'role') and current_user.role == 'admin':
         return True
 
     return False
 
 
-@router.get("/entity/{entity_type}/{entity_id}", response_model=MediaListOut)
+@router.get("/entity/{entity_type}/{entity_id}", response_model=MediaListOut, response_model_by_alias=True)
 def list_media_for_entity(
     entity_type: EntityType,
     entity_id: int,
@@ -268,6 +281,72 @@ def get_media_by_public_id(
     return media_to_out(db, media)
 
 
+@router.patch("/{media_id}", response_model=MediaOut, response_model_by_alias=True)
+async def update_media(
+    media_id: int,
+    update_data: MediaUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Update media metadata including entity_field (e.g., set as avatar or cover photo).
+
+    When setting entity_field to 'avatar' or 'cover':
+    - Any existing media with that entity_field will be moved back to 'gallery'
+    - The selected media will be set to the new entity_field
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    # Check permissions
+    if not check_media_access(media, current_user, db):
+        raise HTTPException(status_code=403, detail="Not authorized to update this media")
+
+    # Handle entity_field change (e.g., setting as avatar or cover)
+    if update_data.entity_field is not None:
+        new_field = update_data.entity_field.value if hasattr(update_data.entity_field, 'value') else update_data.entity_field
+
+        # If setting to avatar or cover, clear any existing media with that field
+        if new_field in ['avatar', 'cover']:
+            existing_media = db.query(Media).filter(
+                Media.entity_type == media.entity_type,
+                Media.entity_id == media.entity_id,
+                Media.entity_field == new_field,
+                Media.id != media_id
+            ).all()
+
+            # Move existing avatar/cover back to gallery
+            for existing in existing_media:
+                existing.entity_field = 'gallery'
+                logger.info(f"Moved media {existing.id} from {new_field} to gallery")
+
+        media.entity_field = new_field
+        logger.info(f"Updated media {media_id} entity_field to '{new_field}'")
+
+    # Update other fields
+    if update_data.alt_text is not None:
+        media.alt_text = update_data.alt_text
+    if update_data.caption is not None:
+        media.caption = update_data.caption
+    if update_data.sort_order is not None:
+        media.sort_order = update_data.sort_order
+    if update_data.is_public is not None:
+        media.is_public = update_data.is_public
+    if update_data.is_primary is not None:
+        media.is_primary = update_data.is_primary
+    if update_data.tags is not None:
+        media.tags = update_data.tags
+    if update_data.moderation_status is not None:
+        media.moderation_status = update_data.moderation_status
+
+    db.commit()
+    db.refresh(media)
+
+    return media_to_out(db, media)
+
+
 @router.delete("/{media_id}", response_model=MediaDeleteResponse)
 async def delete_media(
     media_id: int,
@@ -284,7 +363,7 @@ async def delete_media(
         raise HTTPException(status_code=404, detail="Media not found")
 
     # Check permissions
-    if media.uploaded_by != current_user['public_id'] and current_user.get('role') != 'admin':
+    if media.uploaded_by != current_user.user_id and getattr(current_user, 'role', None) != 'admin':
         raise HTTPException(status_code=403, detail="Not authorized to delete this media")
 
     try:
@@ -453,6 +532,7 @@ async def approve_media_batch(
 
     approved = []
     failed = []
+    communities_to_update = set()  # Track unique community IDs
 
     for media_id in media_ids:
         media = db.query(Media).filter(Media.id == media_id).first()
@@ -470,9 +550,59 @@ async def approve_media_batch(
         media.is_approved = True
         approved.append(media_id)
 
+        # Track community for data_source update
+        if media.entity_type == "community":
+            communities_to_update.add(media.entity_id)
+
+    # Update data_source for affected communities and apply pending changes
+    if communities_to_update:
+        from model.profiles.community import Community
+        from model.collection import CollectionChange
+        from datetime import datetime
+        import json
+
+        for community_id in communities_to_update:
+            community = db.query(Community).filter(Community.id == community_id).first()
+            if not community:
+                continue
+
+            # Apply any pending collection changes for this community
+            pending_changes = db.query(CollectionChange).filter(
+                CollectionChange.entity_type == 'community',
+                CollectionChange.entity_id == community_id,
+                CollectionChange.status == 'pending'
+            ).all()
+
+            applied_fields = []
+            for change in pending_changes:
+                if change.field_name and hasattr(community, change.field_name):
+                    # Parse new_value if it's JSON
+                    try:
+                        new_value = json.loads(change.new_value) if change.new_value else None
+                    except (json.JSONDecodeError, TypeError):
+                        new_value = change.new_value
+
+                    # Apply the change
+                    setattr(community, change.field_name, new_value)
+                    applied_fields.append(change.field_name)
+
+                    # Mark change as applied
+                    change.status = 'applied'
+                    change.reviewed_by = current_user.user_id
+                    change.reviewed_at = datetime.utcnow()
+
+            # Update data_source to indicate manual collection/curation
+            community.data_source = 'collected_manual'
+            community.last_data_sync = datetime.utcnow()
+
+            if applied_fields:
+                logger.info(f"✅ Applied {len(applied_fields)} pending changes to community {community_id}: {applied_fields}")
+
     db.commit()
 
-    logger.info(f"✅ Approved {len(approved)} media items for user {current_user['public_id']}")
+    logger.info(f"✅ Approved {len(approved)} media items for user {current_user.user_id}")
+    if communities_to_update:
+        logger.info(f"✅ Updated data_source='collected_manual' for {len(communities_to_update)} communities: {communities_to_update}")
 
     return {
         "approved": approved,
@@ -570,7 +700,7 @@ async def check_storage_sync(
         "validated": validated_count,
         "orphaned_in_sample": orphaned_count,
         "estimated_total_orphans": estimated_orphans,
-        "storage_type": os.getenv("STORAGE_TYPE", "local"),
+        "storage_type": os.getenv("STORAGE_TYPE", "local").upper(),
         "timestamp": str(datetime.now())
     }
 

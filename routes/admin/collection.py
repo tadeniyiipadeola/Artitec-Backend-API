@@ -15,13 +15,16 @@ from pydantic import BaseModel, Field
 from config.db import get_db
 from model.collection import CollectionJob, CollectionChange, EntityMatch, CollectionJobLog
 from model.property.property import Property
+from model.media import Media
+from schema.media import MediaOut
 from src.collection.job_executor import (
     JobExecutor,
     create_community_collection_job,
     create_builder_collection_job,
     create_property_inventory_job,
     create_bulk_property_discovery_jobs,
-    create_bulk_builder_update_jobs
+    create_bulk_builder_update_jobs,
+    create_bulk_community_update_jobs
 )
 
 logger = logging.getLogger(__name__)
@@ -195,6 +198,7 @@ class CollectionChangeResponse(BaseModel):
     confidence: float
     source_url: Optional[str]
     proposed_entity_data: Optional[dict]  # Add proposed entity data for new entities
+    scraped_media: Optional[List[MediaOut]] = None  # Scraped media pending approval
     reviewed_by: Optional[str]
     reviewed_by_name: Optional[str]  # Full name of reviewer
     reviewed_at: Optional[str]
@@ -302,6 +306,64 @@ class CollectionChangeResponse(BaseModel):
             except Exception as e:
                 logger.warning(f"Failed to fetch entity name for {obj.entity_type} {obj.entity_id}: {e}")
 
+        # Fetch scraped media for this entity (if entity_id exists)
+        scraped_media = None
+        if obj.entity_id and obj.entity_type in ["community", "builder", "property"]:
+            try:
+                import os
+                from routes.media.management import make_full_url, get_entity_profile_id
+
+                # Query media that is not yet approved (scraped media pending review)
+                media_items = db.query(Media).filter(
+                    Media.entity_type == obj.entity_type,
+                    Media.entity_id == obj.entity_id,
+                    Media.is_approved == False  # Only unapproved scraped media
+                ).order_by(Media.entity_field, Media.sort_order).limit(50).all()
+
+                if media_items:
+                    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+                    scraped_media = []
+                    for media in media_items:
+                        scraped_media.append(MediaOut(
+                            id=media.id,
+                            public_id=media.public_id,
+                            filename=media.filename,
+                            original_filename=media.original_filename,
+                            media_type=media.media_type,
+                            content_type=media.content_type,
+                            file_size=media.file_size,
+                            width=media.width,
+                            height=media.height,
+                            duration=media.duration,
+                            image_hash=media.image_hash,
+                            storage_type=media.storage_type,
+                            bucket_name=media.bucket_name,
+                            original_url=make_full_url(media.original_url, base_url),
+                            thumbnail_url=make_full_url(media.thumbnail_url, base_url),
+                            medium_url=make_full_url(media.medium_url, base_url),
+                            large_url=make_full_url(media.large_url, base_url),
+                            video_processed_url=make_full_url(media.video_processed_url, base_url),
+                            entity_type=media.entity_type,
+                            entity_id=media.entity_id,
+                            entity_field=media.entity_field,
+                            entity_profile_id=get_entity_profile_id(db, media.entity_type, media.entity_id),
+                            alt_text=media.alt_text,
+                            caption=media.caption,
+                            sort_order=media.sort_order,
+                            is_primary=media.is_primary,
+                            source_url=media.source_url,
+                            tags=media.tags,
+                            metadata=media.file_metadata,
+                            uploaded_by=media.uploaded_by,
+                            is_public=media.is_public,
+                            is_approved=media.is_approved,
+                            moderation_status=media.moderation_status,
+                            created_at=media.created_at,
+                            updated_at=media.updated_at
+                        ))
+            except Exception as e:
+                logger.warning(f"Failed to fetch scraped media for {obj.entity_type}/{obj.entity_id}: {e}")
+
         data = {
             'id': obj.id,
             'job_id': obj.job_id,
@@ -323,6 +385,7 @@ class CollectionChangeResponse(BaseModel):
             'confidence': obj.confidence,
             'source_url': obj.source_url,
             'proposed_entity_data': obj.proposed_entity_data,
+            'scraped_media': scraped_media,
             'reviewed_by': obj.reviewed_by,
             'reviewed_by_name': reviewed_by_name,
             'reviewed_at': obj.reviewed_at.isoformat() if obj.reviewed_at else None,
@@ -392,20 +455,38 @@ async def create_collection_job(
                     detail="Either search_query or location is required for discovery jobs"
                 )
         elif request.job_type == "update":
-            # For update jobs, entity_id is required UNLESS it's a bulk builder update
-            # (builder entity type with no entity_id and no search_query = bulk update)
-            is_bulk_builder_update = (request.entity_type == "builder" and
-                                     not request.entity_id and
-                                     not request.search_query)
+            # For update jobs, entity_id is required UNLESS it's a bulk update
+            # Bulk update: entity type is builder/community with no entity_id and no search_query
+            is_bulk_update = (request.entity_type in ["builder", "community"] and
+                             not request.entity_id and
+                             not request.search_query)
 
-            if not request.entity_id and not is_bulk_builder_update:
+            if not request.entity_id and not is_bulk_update:
                 raise HTTPException(
                     status_code=400,
-                    detail="entity_id is required for update jobs (or omit both entity_id and search_query for builder bulk update)"
+                    detail="entity_id is required for update jobs (or omit both entity_id and search_query for bulk update)"
                 )
 
         # Route to appropriate job creator
         if request.entity_type == "community":
+            # For update job type without specific community (bulk update mode)
+            if request.job_type == "update" and not request.entity_id and not request.search_query:
+                # Bulk community update: Create update jobs for all existing communities
+                result = create_bulk_community_update_jobs(
+                    db=db,
+                    priority=request.priority or 5,
+                    # initiated_by=current_user.user_id
+                )
+
+                # Return summary response instead of single job (bypass response_model validation)
+                return JSONResponse(content={
+                    "message": f"Created {result['jobs_created']} community update jobs",
+                    "jobs_created": result['jobs_created'],
+                    "communities_processed": result['communities_processed'],
+                    "job_ids": result['job_ids'][:10]  # Return first 10 job IDs
+                })
+
+            # Single community job (discovery or specific update)
             job = create_community_collection_job(
                 db=db,
                 community_id=request.entity_id,
@@ -423,13 +504,13 @@ async def create_collection_job(
                     # initiated_by=current_user.user_id
                 )
 
-                # Return summary response instead of single job
-                return {
+                # Return summary response instead of single job (bypass response_model validation)
+                return JSONResponse(content={
                     "message": f"Created {result['jobs_created']} builder update jobs",
                     "jobs_created": result['jobs_created'],
                     "builders_processed": result['builders_processed'],
                     "job_ids": result['job_ids'][:10]  # Return first 10 job IDs
-                }
+                })
 
             # Single builder job (discovery or specific update)
             job = create_builder_collection_job(
@@ -450,14 +531,14 @@ async def create_collection_job(
                     # initiated_by=current_user.user_id
                 )
 
-                # Return summary response instead of single job
-                return {
+                # Return summary response instead of single job (bypass response_model validation)
+                return JSONResponse(content={
                     "message": f"Created {result['jobs_created']} property inventory jobs",
                     "jobs_created": result['jobs_created'],
                     "communities_processed": result['communities_processed'],
                     "builder_community_pairs": result['builder_community_pairs'],
                     "job_ids": result['job_ids'][:10]  # Return first 10 job IDs
-                }
+                })
 
             # For non-discovery property jobs, require builder_id and community_id
             if request.job_type != "discovery":
@@ -1275,6 +1356,66 @@ async def review_change(
     if request.action not in ["approve", "reject"]:
         raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
 
+    # Helper function to convert string values to proper types based on SQLAlchemy column type
+    def convert_value_to_type(value, entity_obj, field_name):
+        """Convert a string value to the appropriate type for the given field."""
+        if value is None:
+            return None
+
+        # Get the SQLAlchemy column type
+        from sqlalchemy import inspect as sqla_inspect
+        from sqlalchemy.sql.sqltypes import Boolean, Integer, Float, JSON
+
+        mapper = sqla_inspect(entity_obj.__class__)
+        if field_name not in mapper.columns:
+            return value
+
+        column = mapper.columns[field_name]
+        column_type = column.type
+
+        # Handle boolean fields
+        if isinstance(column_type, Boolean):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in ('true', '1', 'yes', 't')
+            return bool(value)
+
+        # Handle integer fields
+        if isinstance(column_type, Integer):
+            if isinstance(value, int):
+                return value
+            try:
+                return int(float(value)) if value else None
+            except (ValueError, TypeError):
+                return None
+
+        # Handle float fields
+        if isinstance(column_type, Float):
+            if isinstance(value, (int, float)):
+                return float(value)
+            try:
+                return float(value) if value else None
+            except (ValueError, TypeError):
+                return None
+
+        # Handle JSON fields (lists/dicts)
+        if isinstance(column_type, JSON):
+            if isinstance(value, (list, dict)):
+                return value
+            # If it's a string that looks like JSON, try to parse it
+            if isinstance(value, str):
+                import json
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, wrap single values in a list
+                    return [value] if value else []
+            return value
+
+        # For all other types (String, Text, etc.), return as-is
+        return value
+
     # Update change status
     change.status = "approved" if request.action == "approve" else "rejected"
     # change.reviewed_by = current_user.user_id
@@ -1365,7 +1506,7 @@ async def review_change(
                     for amenity_name in amenities_data:
                         if amenity_name and isinstance(amenity_name, str):
                             amenity = CommunityAmenity(
-                                community_id=community.id,
+                                community_id=community.community_id,  # Use public community_id (string)
                                 name=amenity_name.strip(),
                                 gallery=[]  # Empty gallery initially
                             )
@@ -1374,6 +1515,65 @@ async def review_change(
 
                     if amenities_created > 0:
                         logger.info(f"Auto-created {amenities_created} amenities for community {community.community_id}")
+
+                # Auto-create awards if provided in collected data
+                awards_data = data.get("awards", [])
+                if awards_data and isinstance(awards_data, list):
+                    from model.profiles.community import CommunityAward
+
+                    awards_created = 0
+                    for award_data in awards_data:
+                        if award_data and isinstance(award_data, dict):
+                            award = CommunityAward(
+                                community_id=community.community_id,  # Use public community_id (string)
+                                title=award_data.get("title"),
+                                year=award_data.get("year"),
+                                issuer=award_data.get("awarded_by") or award_data.get("issuer"),
+                                icon=award_data.get("icon"),
+                                note=award_data.get("note")
+                            )
+                            db.add(award)
+                            awards_created += 1
+
+                    if awards_created > 0:
+                        logger.info(f"Auto-created {awards_created} awards for community {community.community_id}")
+
+                # Auto-create events if provided in collected data
+                events_data = data.get("events", [])
+                if events_data and isinstance(events_data, list):
+                    from model.profiles.community import CommunityEvent
+                    from dateutil import parser as date_parser
+
+                    events_created = 0
+                    for event_data in events_data:
+                        if event_data and isinstance(event_data, dict):
+                            try:
+                                # Parse datetime strings
+                                start_at = None
+                                end_at = None
+                                if event_data.get("start_at"):
+                                    start_at = date_parser.parse(event_data.get("start_at"))
+                                if event_data.get("end_at"):
+                                    end_at = date_parser.parse(event_data.get("end_at"))
+
+                                if start_at:  # Only create if we have a start time
+                                    event = CommunityEvent(
+                                        community_id=community.community_id,  # Use public community_id (string)
+                                        title=event_data.get("title"),
+                                        description=event_data.get("description"),
+                                        start_at=start_at,
+                                        end_at=end_at,
+                                        location=event_data.get("location"),
+                                        is_public=event_data.get("is_public", True)
+                                    )
+                                    db.add(event)
+                                    events_created += 1
+                            except Exception as e:
+                                logger.warning(f"Failed to create event from data {event_data}: {e}")
+                                continue
+
+                    if events_created > 0:
+                        logger.info(f"Auto-created {events_created} events for community {community.community_id}")
 
             elif change.entity_type == "builder":
                 from model.profiles.builder import BuilderProfile, builder_communities, BuilderAward, BuilderCredential
@@ -1572,7 +1772,7 @@ async def review_change(
                                         for amenity_name in amenities_data:
                                             if amenity_name and isinstance(amenity_name, str):
                                                 amenity = CommunityAmenity(
-                                                    community_id=community.id,
+                                                    community_id=community.community_id,  # Use public community_id (string)
                                                     name=amenity_name.strip(),
                                                     gallery=[]
                                                 )
@@ -1581,6 +1781,65 @@ async def review_change(
 
                                         if amenities_created > 0:
                                             logger.info(f"Auto-created {amenities_created} amenities for auto-approved community {community.community_id}")
+
+                                    # Auto-create awards if provided
+                                    awards_data = community_data.get("awards", [])
+                                    if awards_data and isinstance(awards_data, list):
+                                        from model.profiles.community import CommunityAward
+
+                                        awards_created = 0
+                                        for award_data in awards_data:
+                                            if award_data and isinstance(award_data, dict):
+                                                award = CommunityAward(
+                                                    community_id=community.community_id,  # Use public community_id (string)
+                                                    title=award_data.get("title"),
+                                                    year=award_data.get("year"),
+                                                    issuer=award_data.get("awarded_by") or award_data.get("issuer"),
+                                                    icon=award_data.get("icon"),
+                                                    note=award_data.get("note")
+                                                )
+                                                db.add(award)
+                                                awards_created += 1
+
+                                        if awards_created > 0:
+                                            logger.info(f"Auto-created {awards_created} awards for auto-approved community {community.community_id}")
+
+                                    # Auto-create events if provided
+                                    events_data = community_data.get("events", [])
+                                    if events_data and isinstance(events_data, list):
+                                        from model.profiles.community import CommunityEvent
+                                        from dateutil import parser as date_parser
+
+                                        events_created = 0
+                                        for event_data in events_data:
+                                            if event_data and isinstance(event_data, dict):
+                                                try:
+                                                    # Parse datetime strings
+                                                    start_at = None
+                                                    end_at = None
+                                                    if event_data.get("start_at"):
+                                                        start_at = date_parser.parse(event_data.get("start_at"))
+                                                    if event_data.get("end_at"):
+                                                        end_at = date_parser.parse(event_data.get("end_at"))
+
+                                                    if start_at:  # Only create if we have a start time
+                                                        event = CommunityEvent(
+                                                            community_id=community.community_id,  # Use public community_id (string)
+                                                            title=event_data.get("title"),
+                                                            description=event_data.get("description"),
+                                                            start_at=start_at,
+                                                            end_at=end_at,
+                                                            location=event_data.get("location"),
+                                                            is_public=event_data.get("is_public", True)
+                                                        )
+                                                        db.add(event)
+                                                        events_created += 1
+                                                except Exception as e:
+                                                    logger.warning(f"Failed to create event from data {event_data}: {e}")
+                                                    continue
+
+                                        if events_created > 0:
+                                            logger.info(f"Auto-created {events_created} events for auto-approved community {community.community_id}")
 
                                     db.flush()
                                     logger.info(f"Auto-approved and created community {community.community_id} (ID: {community.id}) for builder")
@@ -2079,16 +2338,26 @@ async def review_change(
 
                 # Apply the field-level change
                 if hasattr(builder, change.field_name):
-                    setattr(builder, change.field_name, change.new_value)
+                    # Check if this is a relationship field (not a column)
+                    from sqlalchemy import inspect as sqla_inspect
+                    mapper = sqla_inspect(builder.__class__)
 
-                    # Update data collection metadata (unless we're updating these fields themselves)
-                    if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
-                        builder.last_data_sync = datetime.utcnow()
-                        if change.field_name != 'data_source':
-                            builder.data_source = "collected"
+                    # Skip relationship fields - they can't be set directly
+                    if change.field_name in mapper.relationships:
+                        logger.warning(f"Builder field '{change.field_name}' is a relationship, not a column. Skipping direct assignment.")
+                    else:
+                        # Convert the value to the appropriate type
+                        converted_value = convert_value_to_type(change.new_value, builder, change.field_name)
+                        setattr(builder, change.field_name, converted_value)
 
-                    db.add(builder)
-                    logger.info(f"Updated builder {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
+                        # Update data collection metadata (unless we're updating these fields themselves)
+                        if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
+                            builder.last_data_sync = datetime.utcnow()
+                            if change.field_name != 'data_source':
+                                builder.data_source = "collected"
+
+                        db.add(builder)
+                        logger.info(f"Updated builder {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
                 else:
                     logger.warning(f"Builder field '{change.field_name}' does not exist, skipping update")
 
@@ -2101,16 +2370,26 @@ async def review_change(
 
                 # Apply the field-level change
                 if hasattr(property_obj, change.field_name):
-                    setattr(property_obj, change.field_name, change.new_value)
+                    # Check if this is a relationship field (not a column)
+                    from sqlalchemy import inspect as sqla_inspect
+                    mapper = sqla_inspect(property_obj.__class__)
 
-                    # Update data collection metadata
-                    if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
-                        property_obj.last_data_sync = datetime.utcnow()
-                        if change.field_name != 'data_source':
-                            property_obj.data_source = "collected"
+                    # Skip relationship fields - they can't be set directly
+                    if change.field_name in mapper.relationships:
+                        logger.warning(f"Property field '{change.field_name}' is a relationship, not a column. Skipping direct assignment.")
+                    else:
+                        # Convert the value to the appropriate type
+                        converted_value = convert_value_to_type(change.new_value, property_obj, change.field_name)
+                        setattr(property_obj, change.field_name, converted_value)
 
-                    db.add(property_obj)
-                    logger.info(f"Updated property {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
+                        # Update data collection metadata
+                        if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
+                            property_obj.last_data_sync = datetime.utcnow()
+                            if change.field_name != 'data_source':
+                                property_obj.data_source = "collected"
+
+                        db.add(property_obj)
+                        logger.info(f"Updated property {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
                 else:
                     logger.warning(f"Property field '{change.field_name}' does not exist, skipping update")
 
@@ -2125,16 +2404,27 @@ async def review_change(
 
                 # Apply the field-level change
                 if hasattr(community, change.field_name):
-                    setattr(community, change.field_name, change.new_value)
+                    # Check if this is a relationship field (not a column)
+                    from sqlalchemy import inspect as sqla_inspect
+                    mapper = sqla_inspect(community.__class__)
 
-                    # Update data collection metadata
-                    if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
-                        community.last_data_sync = datetime.utcnow()
-                        if change.field_name != 'data_source':
-                            community.data_source = "collected"
+                    # Skip relationship fields - they can't be set directly
+                    if change.field_name in mapper.relationships:
+                        logger.warning(f"Community field '{change.field_name}' is a relationship, not a column. Skipping direct assignment.")
+                    else:
+                        # Convert the value to the appropriate type
+                        converted_value = convert_value_to_type(change.new_value, community, change.field_name)
+                        logger.info(f"Setting field '{change.field_name}': {repr(change.new_value)} ({type(change.new_value).__name__}) → {repr(converted_value)} ({type(converted_value).__name__})")
+                        setattr(community, change.field_name, converted_value)
 
-                    db.add(community)
-                    logger.info(f"Updated community {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
+                        # Update data collection metadata
+                        if change.field_name not in ['last_data_sync', 'data_source', 'data_confidence']:
+                            community.last_data_sync = datetime.utcnow()
+                            if change.field_name != 'data_source':
+                                community.data_source = "collected"
+
+                        db.add(community)
+                        logger.info(f"Updated community {change.entity_id} field '{change.field_name}' from '{change.old_value}' to '{change.new_value}'")
                 else:
                     logger.warning(f"Community field '{change.field_name}' does not exist, skipping update")
 
@@ -2145,6 +2435,26 @@ async def review_change(
             db.rollback()
             raise HTTPException(status_code=500, detail=f"Failed to apply field change: {str(e)}")
 
+    # If approving, also approve all unapproved scraped media for this entity
+    media_approved_count = 0
+    if request.action == "approve" and change.entity_id and change.entity_type in ["community", "builder", "property"]:
+        try:
+            # Find all unapproved media for this entity
+            unapproved_media = db.query(Media).filter(
+                Media.entity_type == change.entity_type,
+                Media.entity_id == change.entity_id,
+                Media.is_approved == False
+            ).all()
+
+            for media in unapproved_media:
+                media.is_approved = True
+                media_approved_count += 1
+
+            if media_approved_count > 0:
+                logger.info(f"Auto-approved {media_approved_count} scraped media items for {change.entity_type}/{change.entity_id}")
+        except Exception as e:
+            logger.warning(f"Failed to auto-approve scraped media for {change.entity_type}/{change.entity_id}: {e}")
+
     db.commit()
 
     logger.info(f"Change {change_id} {request.action}d by admin")
@@ -2153,8 +2463,14 @@ async def review_change(
     message = f"Change {request.action}d successfully"
     if cascaded_count > 0:
         message += f" (cascaded to {cascaded_count} related change{'s' if cascaded_count != 1 else ''})"
+    if media_approved_count > 0:
+        message += f" ({media_approved_count} media item{'s' if media_approved_count != 1 else ''} approved)"
 
-    return {"message": message, "cascaded_changes": cascaded_count if cascaded_count > 0 else None}
+    return {
+        "message": message,
+        "cascaded_changes": cascaded_count if cascaded_count > 0 else None,
+        "media_approved": media_approved_count if media_approved_count > 0 else None
+    }
 
 
 @router.post("/changes/review-bulk")

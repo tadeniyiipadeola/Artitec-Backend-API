@@ -4,6 +4,7 @@ Property Collector Service
 Collects property/inventory data from builders.
 """
 import logging
+import asyncio
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from model.property.property import Property
@@ -13,6 +14,7 @@ from .base_collector import BaseCollector
 from .prompts import generate_property_collection_prompt
 from .status_management import ImprovedPropertyStatusManager
 from .auto_approval import AutoApprovalService
+from src.media_scraper import MediaScraper
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,9 @@ class PropertyCollector(BaseCollector):
             )
 
             new_count = self._process_properties(properties, collected_data)
+
+            # Auto-scrape media for properties with media_urls
+            self._scrape_property_media()
 
             # Update job results
             self.update_job_status(
@@ -463,3 +468,128 @@ class PropertyCollector(BaseCollector):
             match_confidence=None,
             match_method="no_match_found"
         )
+
+    def _scrape_property_media(self):
+        """
+        Automatically scrape media for properties that have media_urls.
+
+        This runs after property collection to download and store images
+        from the URLs collected during the property scraping process.
+        """
+        try:
+            # Get properties with media_urls for this builder/community
+            query = self.db.query(Property).filter(
+                Property.builder_id == self.builder.id,
+                Property.media_urls.isnot(None)
+            )
+
+            if self.community:
+                query = query.filter(Property.community_id == self.community.id)
+
+            properties_with_media = query.all()
+
+            if not properties_with_media:
+                self.log(
+                    "No properties with media_urls found to scrape",
+                    "INFO",
+                    "media_scraping"
+                )
+                return
+
+            self.log(
+                f"Starting media scraping for {len(properties_with_media)} properties",
+                "INFO",
+                "media_scraping",
+                {"properties_count": len(properties_with_media)}
+            )
+
+            # Initialize media scraper
+            scraper = MediaScraper(db=self.db, uploaded_by="COLLECTOR")
+
+            total_scraped = 0
+            total_errors = 0
+
+            # Process each property
+            for prop in properties_with_media:
+                if not prop.media_urls:
+                    continue
+
+                property_name = prop.title or prop.address1 or f"Property {prop.id}"
+
+                self.log(
+                    f"Scraping {len(prop.media_urls)} images for: {property_name}",
+                    "INFO",
+                    "media_scraping",
+                    {
+                        "property_id": prop.id,
+                        "property_name": property_name,
+                        "media_count": len(prop.media_urls)
+                    }
+                )
+
+                # Download each media URL
+                for idx, url in enumerate(prop.media_urls, 1):
+                    try:
+                        # Run async function in sync context
+                        media = asyncio.run(scraper.download_from_url(
+                            media_url=url,
+                            entity_type="property",
+                            entity_id=prop.id,
+                            entity_field="gallery"
+                        ))
+
+                        if media:
+                            total_scraped += 1
+                            self.log(
+                                f"✅ Downloaded image {idx}/{len(prop.media_urls)} for {property_name}",
+                                "SUCCESS",
+                                "media_scraping",
+                                {
+                                    "property_id": prop.id,
+                                    "media_id": media.id,
+                                    "media_public_id": media.public_id,
+                                    "url": url
+                                }
+                            )
+                        else:
+                            self.log(
+                                f"⚠️ No media returned for {url}",
+                                "WARNING",
+                                "media_scraping",
+                                {"property_id": prop.id, "url": url}
+                            )
+
+                    except Exception as e:
+                        total_errors += 1
+                        self.log(
+                            f"❌ Failed to download image {idx}/{len(prop.media_urls)}: {str(e)}",
+                            "ERROR",
+                            "media_scraping",
+                            {
+                                "property_id": prop.id,
+                                "property_name": property_name,
+                                "url": url,
+                                "error": str(e)
+                            }
+                        )
+
+            self.log(
+                f"Media scraping completed: {total_scraped} images downloaded, {total_errors} errors",
+                "SUCCESS",
+                "media_scraping",
+                {
+                    "total_scraped": total_scraped,
+                    "total_errors": total_errors,
+                    "properties_processed": len(properties_with_media)
+                }
+            )
+
+        except Exception as e:
+            self.log(
+                f"Media scraping failed: {str(e)}",
+                "ERROR",
+                "media_scraping",
+                {"error": str(e), "error_type": type(e).__name__}
+            )
+            # Don't raise - media scraping is optional, shouldn't fail the entire job
+            logger.error(f"Media scraping failed: {str(e)}", exc_info=True)
