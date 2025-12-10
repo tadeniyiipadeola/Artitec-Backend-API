@@ -181,16 +181,39 @@ class CommunityEvent(Base):
 
 
 class CommunityBuilder(Base):
+    """
+    Builder card displayed on community pages.
+    Acts as the display layer and triggers full builder profile collection.
+
+    Relationships:
+      - builder_profile: FK to builder_profiles.id (full builder details collected by BuilderCollector)
+      - community: FK to communities.community_id (which community this builder card belongs to)
+    """
     __tablename__ = "community_builders"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Internal numeric ID of community
     community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Link to full builder profile (populated after BuilderCollector runs)
+    # Note: Using Integer to match actual builder_profiles.id type in database
+    builder_profile_id = Column(Integer, ForeignKey("builder_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Display fields (populated during community discovery)
     icon = Column(String(64))
     name = Column(String(255))
     subtitle = Column(String(255))
     followers = Column(Integer, default=0)
     is_verified = Column(Boolean, default=False)
+
+    # Timestamps
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
+    )
+
+    # Relationship back to builder profile
+    builder_profile = relationship("BuilderProfile", foreign_keys=[builder_profile_id], lazy="joined")
 
 
 class CommunityAdmin(Base):

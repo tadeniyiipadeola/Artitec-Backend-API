@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
-from model.profiles.community import Community
+from model.profiles.community import Community, CommunityBuilder
 from model.profiles.builder import BuilderProfile
 from model.collection import CollectionJob
 from .base_collector import BaseCollector
@@ -427,7 +427,44 @@ class CommunityCollector(BaseCollector):
                     # Auto-scrape media for communities (area discovery mode)
                     self._scrape_community_media()
 
-                    # PHASE 2: Builder discovery is now DISABLED during initial collection
+                    # PHASE 2: Populate community_builders table
+                    # This happens AFTER community creation but BEFORE builder job creation
+                    # Allows iOS app to display builder names immediately while full builder profiles are collected later
+                    self.log("Populating community_builders table with discovered builder names", "INFO", "saving")
+                    for community_data in communities_list:
+                        try:
+                            self._populate_builder_cards(community_data)
+                        except Exception as e:
+                            community_name_for_error = community_data.get("name", "Unknown")
+                            error_msg = f"Failed to populate builder cards for {community_name_for_error}: {str(e)}"
+                            self.log(error_msg, "ERROR", "saving", {"error": str(e), "community": community_name_for_error})
+                            logger.error(error_msg, exc_info=True)
+                            continue
+
+                    # PHASE 2.5: Create builder collection jobs from community_builders entries
+                    # This creates jobs for full builder profile collection from the builder cards we just populated
+                    self.log("Creating builder collection jobs from community_builders table", "INFO", "builder_jobs")
+                    for community_data in communities_list:
+                        try:
+                            # Fetch the Community object by community_id
+                            community_id = community_data.get("id")
+                            if not community_id:
+                                continue
+
+                            community_obj = self.db.query(Community).filter(
+                                Community.community_id == community_id
+                            ).first()
+
+                            if community_obj:
+                                self._create_builder_jobs_from_cards(community_obj)
+                        except Exception as e:
+                            community_name_for_error = community_data.get("name", "Unknown")
+                            error_msg = f"Failed to create builder jobs for {community_name_for_error}: {str(e)}"
+                            self.log(error_msg, "ERROR", "builder_jobs", {"error": str(e), "community": community_name_for_error})
+                            logger.error(error_msg, exc_info=True)
+                            continue
+
+                    # PHASE 3: Builder discovery is now DISABLED during initial collection
                     # Builder jobs will be created AFTER communities are approved by admin
                     # This prevents wasting resources on communities that may be rejected
                     builder_jobs_created = 0
@@ -492,6 +529,28 @@ class CommunityCollector(BaseCollector):
                         community_name_found = collected_data.get("name", "Unknown")
                         self.log(f"Creating new community: {community_name_found}", "INFO", "saving")
                         self._process_new_community(collected_data)
+
+                    # Populate community_builders table for single community
+                    self.log("Populating community_builders table with discovered builder names", "INFO", "saving")
+                    self._populate_builder_cards(collected_data)
+
+                    # Create builder collection jobs from community_builders entries
+                    self.log("Creating builder collection jobs from community_builders table", "INFO", "builder_jobs")
+                    try:
+                        # Fetch the Community object by community_id
+                        community_id = collected_data.get("id")
+                        if community_id:
+                            community_obj = self.db.query(Community).filter(
+                                Community.community_id == community_id
+                            ).first()
+
+                            if community_obj:
+                                self._create_builder_jobs_from_cards(community_obj)
+                    except Exception as e:
+                        community_name_for_error = collected_data.get("name", "Unknown")
+                        error_msg = f"Failed to create builder jobs for {community_name_for_error}: {str(e)}"
+                        self.log(error_msg, "ERROR", "builder_jobs", {"error": str(e), "community": community_name_for_error})
+                        logger.error(error_msg, exc_info=True)
 
                     # Builder discovery is now DISABLED during initial collection
                     # Builder jobs will be created AFTER community is approved by admin
@@ -1472,3 +1531,311 @@ class CommunityCollector(BaseCollector):
             )
             # Don't raise - media scraping is optional, shouldn't fail the entire job
             logger.error(f"Media scraping failed: {str(e)}", exc_info=True)
+
+    def _get_builder_icon_by_size(self, builder_name: str) -> str:
+        """
+        Determine builder icon based on company size/prominence.
+
+        Returns icon identifier (emoji-like string) based on builder tier:
+        - 🏢 National/Large Builders (household names)
+        - 🏗️ Regional Builders (multi-state presence)
+        - 🏠 Local Builders (smaller, local companies)
+
+        Args:
+            builder_name: Name of the builder
+
+        Returns:
+            Icon string representing builder size
+        """
+        builder_lower = builder_name.lower()
+
+        # National/Large Builders - Major household names
+        national_builders = [
+            "lennar", "d.r. horton", "dr horton", "pulte", "kb home",
+            "toll brothers", "taylor morrison", "meritage homes",
+            "century communities", "tri pointe", "beazer homes",
+            "shea homes", "richmond american", "david weekley"
+        ]
+
+        # Regional Builders - Multi-state presence
+        regional_builders = [
+            "standard pacific", "ryland", "centex", "m/i homes",
+            "ashton woods", "hovnanian", "drees homes", "montebello"
+        ]
+
+        # Check if builder is national/large
+        for national in national_builders:
+            if national in builder_lower:
+                return "🏢"
+
+        # Check if builder is regional
+        for regional in regional_builders:
+            if regional in builder_lower:
+                return "🏗️"
+
+        # Default to local builder icon
+        return "🏠"
+
+    def _populate_builder_cards(self, community_data: Dict[str, Any]):
+        """
+        Populate the community_builders table with basic builder information.
+
+        This method is called AFTER a community is created but BEFORE detailed builder
+        discovery jobs are created. It allows the iOS app to immediately display builder
+        names while full builder profiles are collected later.
+
+        Args:
+            community_data: Dictionary containing community information including 'builders' list
+        """
+        try:
+            # Extract builders list from community data
+            builders = community_data.get("builders", [])
+
+            if not builders:
+                self.log(
+                    "No builders found in community data to populate builder cards table",
+                    "INFO",
+                    "builder_cards"
+                )
+                return
+
+            # Get the community's public ID
+            community_name = community_data.get("name", "Unknown Community")
+
+            # Query the community by name to get its public community_id
+            from sqlalchemy import func
+            community = self.db.query(Community).filter(
+                func.lower(Community.name) == func.lower(community_name)
+            ).first()
+
+            if not community or not community.community_id:
+                self.log(
+                    f"Could not find community '{community_name}' in database",
+                    "WARNING",
+                    "builder_cards",
+                    {"community_name": community_name}
+                )
+                return
+
+            community_public_id = community.community_id
+            community_numeric_id = community.id  # Get the internal numeric ID
+            cards_created = 0
+            cards_skipped = 0
+
+            # Process each builder
+            for builder_data in builders:
+                if not isinstance(builder_data, dict):
+                    continue
+
+                builder_name = builder_data.get("name")
+                if not builder_name:
+                    continue
+
+                # Check if this builder card already exists for this community
+                existing_card = self.db.query(CommunityBuilder).filter(
+                    CommunityBuilder.community_id == community_public_id,
+                    func.lower(CommunityBuilder.name) == func.lower(builder_name)
+                ).first()
+
+                if existing_card:
+                    cards_skipped += 1
+                    self.log(
+                        f"Builder card already exists: {builder_name}",
+                        "DEBUG",
+                        "builder_cards",
+                        {
+                            "community_id": community_public_id,
+                            "builder_name": builder_name,
+                            "card_id": existing_card.id
+                        }
+                    )
+                    continue
+
+                # Determine icon based on builder size/prominence
+                builder_icon = self._get_builder_icon_by_size(builder_name)
+
+                # Extract subtitle - try multiple fields
+                subtitle = (
+                    builder_data.get("subtitle") or
+                    builder_data.get("specialties") or
+                    builder_data.get("description") or
+                    None
+                )
+
+                # Create new builder card
+                new_card = CommunityBuilder(
+                    community_id=community_public_id,
+                    community_numeric_id=community_numeric_id,  # Set the internal numeric ID
+                    name=builder_name,
+                    subtitle=subtitle,
+                    icon=builder_icon,
+                    is_verified=False,  # Discovered builders start as unverified
+                    followers=0
+                )
+
+                self.db.add(new_card)
+                cards_created += 1
+
+                self.log(
+                    f"Created builder card: {builder_name} ({builder_icon})",
+                    "SUCCESS",
+                    "builder_cards",
+                    {
+                        "community_id": community_public_id,
+                        "community_name": community_name,
+                        "builder_name": builder_name,
+                        "icon": builder_icon
+                    }
+                )
+
+            # Commit all new cards
+            if cards_created > 0:
+                self.db.commit()
+
+            self.log(
+                f"Builder cards populated for {community_name}: {cards_created} created, {cards_skipped} skipped",
+                "SUCCESS",
+                "builder_cards",
+                {
+                    "community_id": community_public_id,
+                    "community_name": community_name,
+                    "cards_created": cards_created,
+                    "cards_skipped": cards_skipped,
+                    "total_builders": len(builders)
+                }
+            )
+
+        except Exception as e:
+            self.log(
+                f"Failed to populate builder cards: {str(e)}",
+                "ERROR",
+                "builder_cards",
+                {"error": str(e), "error_type": type(e).__name__}
+            )
+            # Don't raise - this is optional functionality
+            logger.error(f"Failed to populate builder cards: {str(e)}", exc_info=True)
+            # Rollback any partial changes
+            self.db.rollback()
+
+    def _create_builder_jobs_from_cards(self, community: Community):
+        """
+        Create builder collection jobs for builder cards that don't have a builder_profile_id yet.
+
+        This is called after populating builder cards to trigger full builder profile collection.
+
+        Args:
+            community: Community object with builder cards
+        """
+        from model.collection import CollectionJob
+
+        try:
+            community_public_id = community.community_id
+            community_name = community.name
+
+            # Query all builder cards for this community that don't have a builder profile yet
+            uncollected_cards = self.db.query(CommunityBuilder).filter(
+                CommunityBuilder.community_id == community_public_id,
+                CommunityBuilder.builder_profile_id.is_(None)
+            ).all()
+
+            if not uncollected_cards:
+                self.log(
+                    f"No builder cards need profile collection for {community_name}",
+                    "INFO",
+                    "builder_jobs",
+                    {
+                        "community_id": community_public_id,
+                        "community_name": community_name
+                    }
+                )
+                return
+
+            jobs_created = 0
+            jobs_skipped = 0
+
+            for card in uncollected_cards:
+                builder_name = card.name
+
+                if not builder_name:
+                    jobs_skipped += 1
+                    continue
+
+                # Check if a pending/running job already exists for this builder name
+                existing_job = self.db.query(CollectionJob).filter(
+                    CollectionJob.entity_type == "builder",
+                    CollectionJob.search_query == builder_name,
+                    CollectionJob.status.in_(["pending", "running"])
+                ).first()
+
+                if existing_job:
+                    jobs_skipped += 1
+                    self.log(
+                        f"Builder job already exists: {builder_name}",
+                        "DEBUG",
+                        "builder_jobs",
+                        {
+                            "builder_name": builder_name,
+                            "existing_job_id": existing_job.job_id,
+                            "card_id": card.id
+                        }
+                    )
+                    continue
+
+                # Create new builder collection job
+                new_job = CollectionJob(
+                    entity_type="builder",
+                    job_type="discovery",  # Discovery job to find and create builder profile
+                    search_query=builder_name,  # Use builder name as search query
+                    priority=5,  # Medium priority (community jobs are 10)
+                    status="pending",
+                    # Store card ID in search_filters so builder_collector can link back
+                    search_filters={
+                        "community_builder_card_id": card.id,
+                        "community_id": community_public_id,
+                        "community_name": community_name
+                    }
+                )
+
+                self.db.add(new_job)
+                jobs_created += 1
+
+                self.log(
+                    f"Created builder collection job: {builder_name}",
+                    "SUCCESS",
+                    "builder_jobs",
+                    {
+                        "builder_name": builder_name,
+                        "job_id": new_job.job_id,
+                        "card_id": card.id,
+                        "community_id": community_public_id
+                    }
+                )
+
+            # Commit all new jobs
+            if jobs_created > 0:
+                self.db.commit()
+
+            self.log(
+                f"Builder jobs created for {community_name}: {jobs_created} created, {jobs_skipped} skipped",
+                "SUCCESS",
+                "builder_jobs",
+                {
+                    "community_id": community_public_id,
+                    "community_name": community_name,
+                    "jobs_created": jobs_created,
+                    "jobs_skipped": jobs_skipped,
+                    "total_uncollected_cards": len(uncollected_cards)
+                }
+            )
+
+        except Exception as e:
+            self.log(
+                f"Failed to create builder jobs: {str(e)}",
+                "ERROR",
+                "builder_jobs",
+                {"error": str(e), "error_type": type(e).__name__}
+            )
+            # Don't raise - this is optional functionality
+            logger.error(f"Failed to create builder jobs: {str(e)}", exc_info=True)
+            # Rollback any partial changes
+            self.db.rollback()

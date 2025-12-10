@@ -426,6 +426,7 @@ def delete_event(*, db: Session = Depends(get_db), community_id: int, event_id: 
 def list_builder_cards(*, db: Session = Depends(get_db), community_id: str):
     """List all builder cards for a community. Use string community_id (e.g., CMY-xxx)."""
     from model.profiles.builder import BuilderProfile, builder_communities
+    from model.profiles.community import CommunityBuilder
 
     # Get community to retrieve numeric ID for builder_communities join
     community = _get_or_404(db, community_id)
@@ -462,6 +463,25 @@ def list_builder_cards(*, db: Session = Depends(get_db), community_id: str):
             followers=0,  # BuilderProfile doesn't have follower_count - could add later
             is_verified=builder.verified == 1 and builder.is_active  # Only verified if both verified AND active
         ))
+
+    # Fallback: If no BuilderProfile entities found, try legacy community_builders table
+    if not result:
+        legacy_cards = (
+            db.query(CommunityBuilder)
+            .filter(CommunityBuilder.community_id == community.community_id)
+            .all()
+        )
+
+        for card in legacy_cards:
+            result.append(CommunityBuilderCardOut(
+                id=card.id,
+                community_id=community.community_id,
+                name=card.name,
+                icon=card.icon,
+                subtitle=card.subtitle,
+                followers=card.followers or 0,
+                is_verified=card.is_verified or False
+            ))
 
     return result
 
