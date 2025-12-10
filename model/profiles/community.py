@@ -184,7 +184,8 @@ class CommunityBuilder(Base):
     __tablename__ = "community_builders"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     icon = Column(String(64))
     name = Column(String(255))
     subtitle = Column(String(255))
@@ -229,7 +230,8 @@ class CommunityTopic(Base):
     __tablename__ = "community_topics"
 
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
-    community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False)
+    community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
+    community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255))
     category = Column(String(255))
     replies = Column(Integer, default=0)

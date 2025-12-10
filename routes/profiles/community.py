@@ -69,8 +69,9 @@ def _parse_include(include: Optional[str]) -> Set[str]:
     return {p.strip().lower() for p in include.split(",") if p.strip()}
 
 
-def _get_or_404(db: Session, community_id: int) -> CommunityModel:
-    obj = db.query(CommunityModel).filter(CommunityModel.id == community_id).first()
+def _get_or_404(db: Session, community_id: str) -> CommunityModel:
+    """Get community by public string ID (e.g., CMY-xxx) or raise 404."""
+    obj = db.query(CommunityModel).filter(CommunityModel.community_id == community_id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Community not found")
     return obj
@@ -422,10 +423,47 @@ def delete_event(*, db: Session = Depends(get_db), community_id: int, event_id: 
 # --------------------------- Nested: Builder Cards --------------------------
 
 @router.get("/{community_id}/builder-cards", response_model=List[CommunityBuilderCardOut])
-def list_builder_cards(*, db: Session = Depends(get_db), community_id: int):
-    _get_or_404(db, community_id)
-    rows = db.query(BuilderCardModel).filter(BuilderCardModel.community_id == community_id).all()
-    return [CommunityBuilderCardOut.model_validate(r) for r in rows]
+def list_builder_cards(*, db: Session = Depends(get_db), community_id: str):
+    """List all builder cards for a community. Use string community_id (e.g., CMY-xxx)."""
+    from model.profiles.builder import BuilderProfile, builder_communities
+
+    # Get community to retrieve numeric ID for builder_communities join
+    community = _get_or_404(db, community_id)
+
+    # Query all builders associated with this community via builder_communities
+    # Include both active and inactive builders so users know who is not yet on the platform
+    # Note: builder_communities uses numeric community ID (community.id)
+    builders = (
+        db.query(BuilderProfile)
+        .join(builder_communities, BuilderProfile.id == builder_communities.c.builder_id)
+        .filter(builder_communities.c.community_id == community.id)
+        .all()
+    )
+
+    # Transform BuilderProfile objects to CommunityBuilderCardOut format
+    result = []
+    for builder in builders:
+        # Map builder profile fields to builder card fields
+        subtitle = None
+        if builder.title:
+            subtitle = builder.title
+        elif builder.specialties and isinstance(builder.specialties, list) and len(builder.specialties) > 0:
+            subtitle = builder.specialties[0]
+
+        # For inactive builders, the card will be shown but clicking won't navigate to profile
+        # The iOS app should check is_verified to determine if navigation is enabled
+        # is_verified is True only if builder is both verified AND active on platform
+        result.append(CommunityBuilderCardOut(
+            id=builder.id,
+            community_id=community.community_id,  # Public CMY-XXX ID
+            name=builder.name,
+            icon=None,  # BuilderProfile doesn't have icon field - could add later
+            subtitle=subtitle,
+            followers=0,  # BuilderProfile doesn't have follower_count - could add later
+            is_verified=builder.verified == 1 and builder.is_active  # Only verified if both verified AND active
+        ))
+
+    return result
 
 
 @router.post("/{community_id}/builder-cards", response_model=CommunityBuilderCardOut, status_code=status.HTTP_201_CREATED)
@@ -560,14 +598,16 @@ def delete_award(*, db: Session = Depends(get_db), community_id: int, award_id: 
 # ------------------------------- Nested: Topics -----------------------------
 
 @router.get("/{community_id}/topics", response_model=List[CommunityTopicOut])
-def list_topics(*, db: Session = Depends(get_db), community_id: int):
+def list_topics(*, db: Session = Depends(get_db), community_id: str):
+    """List all topics/threads for a community. Use string community_id (e.g., CMY-xxx)."""
     _get_or_404(db, community_id)
     rows = db.query(TopicModel).filter(TopicModel.community_id == community_id).all()
     return [CommunityTopicOut.model_validate(r) for r in rows]
 
 
 @router.post("/{community_id}/topics", response_model=CommunityTopicOut, status_code=status.HTTP_201_CREATED)
-def add_topic(*, db: Session = Depends(get_db), community_id: int, payload: CommunityTopicCreate):
+def add_topic(*, db: Session = Depends(get_db), community_id: str, payload: CommunityTopicCreate):
+    """Create a new topic/thread for a community. Use string community_id (e.g., CMY-xxx)."""
     _get_or_404(db, community_id)
     data = payload.model_dump(exclude_none=True)
     data["community_id"] = community_id
