@@ -1914,10 +1914,31 @@ async def review_change(
                         detail=f"Duplicate builder detected: matches existing builder ID {duplicate_id} with {match_confidence:.0%} confidence via {match_method}"
                     )
 
-                # Generate unique builder_id
-                timestamp = int(time.time())
-                random_suffix = uuid.uuid4().hex[:6].upper()
-                builder_id_str = f"BLD-{timestamp}-{random_suffix}"
+                # Generate unique builder_id using builder name with collision check
+                builder_name = data.get("name", "BUILDER")
+                cleaned_name = ''.join(c for c in builder_name if c.isalnum()).upper()
+
+                # Try up to 10 times to generate a unique ID
+                builder_id_str = None
+                max_attempts = 10
+                for attempt in range(max_attempts):
+                    # Generate 8-digit random number
+                    random_suffix = str(uuid.uuid4().int)[:8]
+                    candidate_id = f"BLD-{cleaned_name}-{random_suffix}"
+
+                    # Check if this ID already exists
+                    existing = db.query(BuilderProfile).filter(
+                        BuilderProfile.builder_id == candidate_id
+                    ).first()
+
+                    if not existing:
+                        builder_id_str = candidate_id
+                        break
+
+                    logger.warning(f"Builder ID collision detected: {candidate_id} (attempt {attempt + 1}/{max_attempts})")
+
+                if not builder_id_str:
+                    raise ValueError(f"Could not generate unique builder_id after {max_attempts} attempts for builder '{builder_name}'")
 
                 # Create builder with default admin user
                 builder = BuilderProfile(
@@ -2013,6 +2034,29 @@ async def review_change(
                         logger.warning(f"Failed to link builder to community {community_id}: {e}")
 
                 logger.info(f"Created new builder {builder.builder_id} from change {change_id}")
+
+                # UPDATE COMMUNITY_BUILDERS: Link the community_builder card to this builder profile
+                # Check if this job came from a community_builders entry
+                job = db.query(CollectionJob).filter(CollectionJob.job_id == change.job_id).first()
+                if job and job.search_filters:
+                    community_builder_card_id = job.search_filters.get("community_builder_card_id")
+
+                    if community_builder_card_id:
+                        from model.profiles.community import CommunityBuilder
+
+                        # Find the community_builders card
+                        card = db.query(CommunityBuilder).filter(
+                            CommunityBuilder.id == community_builder_card_id
+                        ).first()
+
+                        if card:
+                            # Link it to the newly created builder profile
+                            card.builder_profile_id = builder.id
+                            db.flush()
+
+                            logger.info(f"Linked community_builder card {card.id} ('{card.name}') to builder profile {builder.builder_id} (ID: {builder.id})")
+                        else:
+                            logger.warning(f"Community builder card {community_builder_card_id} not found for linking to builder {builder.builder_id}")
 
             elif change.entity_type == "property":
                 from model.property.property import Property
@@ -2983,6 +3027,285 @@ async def backfill_community_builders(
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to backfill community builders: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/coverage/builder-profiles")
+async def get_builder_profile_coverage(
+    db: Session = Depends(get_db)
+):
+    """
+    Get builder profile linking coverage statistics.
+
+    Shows how many builder cards are linked to full builder profiles.
+    This is different from community-builder coverage - this tracks whether
+    individual builder cards have a builder_profile_id link to the full profile.
+    """
+    try:
+        from sqlalchemy import text
+
+        # Total builder cards
+        total_result = db.execute(text("SELECT COUNT(*) FROM community_builders")).scalar()
+        total_cards = total_result or 0
+
+        # Linked cards (have builder_profile_id)
+        linked_result = db.execute(text("""
+            SELECT COUNT(*)
+            FROM community_builders
+            WHERE builder_profile_id IS NOT NULL
+        """)).scalar()
+        linked_cards = linked_result or 0
+
+        # Unlinked cards
+        unlinked_cards = total_cards - linked_cards
+
+        # Linking percentage
+        linking_pct = (linked_cards / total_cards * 100) if total_cards > 0 else 0
+
+        # Get unlinked cards grouped by builder name
+        unlinked_result = db.execute(text("""
+            SELECT
+                cb.name as builder_name,
+                COUNT(*) as card_count,
+                GROUP_CONCAT(DISTINCT cb.community_id) as communities
+            FROM community_builders cb
+            WHERE cb.builder_profile_id IS NULL
+            GROUP BY cb.name
+            ORDER BY card_count DESC, cb.name
+        """))
+
+        unlinked_builders = [
+            {
+                "builder_name": row.builder_name,
+                "card_count": row.card_count,
+                "communities": row.communities.split(',') if row.communities else []
+            }
+            for row in unlinked_result.fetchall()
+        ]
+
+        return {
+            "total_builder_cards": total_cards,
+            "linked_cards": linked_cards,
+            "unlinked_cards": unlinked_cards,
+            "linking_percentage": round(linking_pct, 1),
+            "unlinked_builders": unlinked_builders
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get builder profile coverage: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/backfill/builder-profiles")
+async def backfill_builder_profiles(
+    priority: int = Query(7, description="Priority for created jobs (1-10)", ge=1, le=10),
+    dry_run: bool = Query(False, description="Preview without creating jobs (default: False)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Create collection jobs for builder cards without builder_profile_id.
+
+    This endpoint creates builder profile collection jobs for cards that exist
+    but are not yet linked to full builder profiles. When the jobs are executed
+    and approved, the cards will automatically link to the new profiles via the
+    community_builder_card_ids metadata.
+
+    **Process:**
+    1. Finds all builder cards without builder_profile_id
+    2. Groups them by unique builder name
+    3. Creates one collection job per unique builder
+    4. Jobs store card IDs in metadata for auto-linking on approval
+
+    **Usage:**
+    - Default behavior creates jobs immediately (dry_run=false)
+    - Set dry_run=true to preview what would be created
+    """
+    try:
+        from sqlalchemy import text
+        import json
+        import time
+        import random
+        import string
+
+        # Get all unlinked builder cards
+        unlinked_result = db.execute(text("""
+            SELECT
+                id,
+                name,
+                community_id,
+                subtitle,
+                icon,
+                followers,
+                is_verified
+            FROM community_builders
+            WHERE builder_profile_id IS NULL
+            ORDER BY name, community_id
+        """))
+
+        unlinked_cards = unlinked_result.fetchall()
+
+        if not unlinked_cards:
+            return {
+                "message": "All builder cards are already linked",
+                "builders_found": 0,
+                "jobs_created": 0,
+                "cards_affected": 0,
+                "dry_run": dry_run
+            }
+
+        # Group by unique builder name
+        builders_map = {}  # name -> {card_ids, communities, sample_card}
+        for card in unlinked_cards:
+            name = card.name
+            if name not in builders_map:
+                builders_map[name] = {
+                    'name': name,
+                    'card_ids': [],
+                    'communities': set(),
+                    'sample_card': card
+                }
+            builders_map[name]['card_ids'].append(card.id)
+            builders_map[name]['communities'].add(card.community_id)
+
+        # Check for existing jobs for these builders
+        if builders_map:
+            builder_names = list(builders_map.keys())
+            placeholders = ','.join([':name' + str(i) for i in range(len(builder_names))])
+            params = {f'name{i}': name for i, name in enumerate(builder_names)}
+
+            existing_jobs_result = db.execute(text(f"""
+                SELECT
+                    id,
+                    job_id,
+                    search_filters,
+                    status
+                FROM collection_jobs
+                WHERE entity_type = 'builder'
+                AND JSON_UNQUOTE(JSON_EXTRACT(search_filters, '$.builder_name')) IN ({placeholders})
+            """), params)
+
+            existing_jobs = existing_jobs_result.fetchall()
+
+            # Map existing jobs to builder names
+            existing_builders = {}
+            for job in existing_jobs:
+                filters = json.loads(job.search_filters) if job.search_filters else {}
+                builder_name = filters.get('builder_name')
+                if builder_name:
+                    if builder_name not in existing_builders:
+                        existing_builders[builder_name] = []
+                    existing_builders[builder_name].append(job)
+
+            # Remove builders that already have pending or in_progress jobs
+            for name in list(builders_map.keys()):
+                if name in existing_builders:
+                    jobs = existing_builders[name]
+                    active_jobs = [j for j in jobs if j.status in ('pending', 'in_progress')]
+                    if active_jobs:
+                        logger.info(f"Skipping '{name}' - has {len(active_jobs)} active job(s)")
+                        del builders_map[name]
+
+        if not builders_map:
+            return {
+                "message": "All unlinked builders already have active collection jobs",
+                "builders_found": 0,
+                "jobs_created": 0,
+                "cards_affected": 0,
+                "dry_run": dry_run
+            }
+
+        # Create jobs
+        jobs_preview = []
+        jobs_created = []
+        total_cards_affected = 0
+
+        for name, data in builders_map.items():
+            card_ids = data['card_ids']
+            total_cards_affected += len(card_ids)
+
+            # Create search filters with builder name and card IDs for auto-linking
+            search_filters = {
+                'builder_name': name,
+                'community_builder_card_ids': card_ids,  # Multiple cards will all link to same profile
+                'source': 'builder_profile_backfill_api'
+            }
+
+            job_data = {
+                "builder_name": name,
+                "card_count": len(card_ids),
+                "communities": list(data['communities']),
+                "priority": priority
+            }
+
+            jobs_preview.append(job_data)
+
+            if not dry_run:
+                # Generate unique job_id
+                timestamp = str(int(time.time()))
+                random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+                job_id_str = f"JOB-{timestamp}-{random_suffix}"
+
+                # Insert collection job
+                db.execute(text("""
+                    INSERT INTO collection_jobs (
+                        job_id,
+                        entity_type,
+                        job_type,
+                        search_filters,
+                        status,
+                        priority,
+                        created_at
+                    )
+                    VALUES (
+                        :job_id,
+                        'builder',
+                        'discovery',
+                        :search_filters,
+                        'pending',
+                        :priority,
+                        NOW()
+                    )
+                """), {
+                    'job_id': job_id_str,
+                    'search_filters': json.dumps(search_filters),
+                    'priority': priority
+                })
+
+                jobs_created.append({
+                    'job_id': job_id_str,
+                    'builder_name': name,
+                    'card_count': len(card_ids)
+                })
+
+        if not dry_run:
+            db.commit()
+            logger.info(f"Created {len(jobs_created)} collection jobs for unlinked builder cards")
+
+        response = {
+            "message": f"{'Would create' if dry_run else 'Created'} {len(jobs_preview)} collection job(s) for unlinked builder cards",
+            "builders_found": len(builders_map),
+            "jobs_created": len(jobs_created) if not dry_run else 0,
+            "cards_affected": total_cards_affected,
+            "dry_run": dry_run,
+            "priority": priority
+        }
+
+        # Include preview/jobs data
+        if dry_run:
+            response["jobs_preview"] = jobs_preview[:20]
+            if len(jobs_preview) > 20:
+                response["jobs_preview_truncated"] = f"Showing 20 of {len(jobs_preview)} jobs"
+        else:
+            response["jobs"] = jobs_created[:20]
+            if len(jobs_created) > 20:
+                response["jobs_truncated"] = f"Showing 20 of {len(jobs_created)} jobs"
+            response["next_step"] = "Execute pending jobs via POST /v1/admin/collection/jobs/execute-pending"
+
+        return response
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to backfill builder profiles: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
