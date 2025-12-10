@@ -1,0 +1,148 @@
+#!/usr/bin/expect -f
+
+set timeout 120
+set nas_host "100.94.199.71"
+set nas_user "Admin"
+set nas_password "Password1"
+
+# Enable command output
+log_user 1
+
+# Connect via SSH
+spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $nas_user@$nas_host
+
+# Wait for password prompt
+expect {
+    "password:" {
+        send "$nas_password\r"
+    }
+    timeout {
+        puts "ERROR: Timeout waiting for password prompt"
+        exit 1
+    }
+}
+
+# Wait for shell prompt
+expect {
+    -re {[$#>]} {
+        puts "✓ SSH connection established"
+    }
+    timeout {
+        puts "ERROR: Timeout waiting for shell prompt"
+        exit 1
+    }
+}
+
+# Navigate to project directory
+send "cd /volume1/docker/Artitec-Backend-API\r"
+expect -re {[$#>]}
+
+# Pull latest changes from GitHub
+puts "\n=== Pulling latest changes from GitHub ==="
+send "sudo git pull origin main\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# Run database migrations
+puts "\n=== Running database migrations ==="
+send "sudo .venv/bin/alembic upgrade head\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# Stop existing container
+puts "\n=== Stopping existing container ==="
+send "sudo docker stop artitec-api\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# Remove existing container
+puts "\n=== Removing existing container ==="
+send "sudo docker rm artitec-api\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# Build new Docker image
+puts "\n=== Building new Docker image ==="
+send "sudo docker build -t artitec-backend:latest .\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect {
+            "Successfully built" {
+                puts "✓ Docker image built successfully"
+            }
+            timeout {
+                puts "ERROR: Docker build timed out"
+                exit 1
+            }
+        }
+    }
+    "Successfully built" {
+        puts "✓ Docker image built successfully"
+    }
+    timeout {
+        puts "ERROR: Docker build timed out"
+        exit 1
+    }
+}
+
+expect -re {[$#>]}
+
+# Start new container
+puts "\n=== Starting new container ==="
+send "sudo docker run -d --name artitec-api --network host --env-file .env --restart unless-stopped -v /volume1/docker/Artitec-Backend-API/uploads:/app/uploads artitec-backend:latest\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# Check container status
+puts "\n=== Checking container status ==="
+send "sudo docker ps | grep artitec\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# View recent logs
+puts "\n=== Viewing recent logs ==="
+send "sudo docker logs --tail 30 artitec-api\r"
+expect {
+    "password" {
+        send "$nas_password\r"
+        expect -re {[$#>]}
+    }
+    -re {[$#>]} {}
+}
+
+# Exit SSH session
+send "exit\r"
+expect eof
+
+puts "\n✓ Deployment complete!"

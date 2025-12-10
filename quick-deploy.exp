@@ -1,0 +1,90 @@
+#!/usr/bin/expect -f
+# Quick deployment script using expect (no sshpass required)
+
+set timeout 600
+
+puts "🚀 Starting Artitec Backend deployment update...\n"
+
+spawn ssh Admin@100.94.199.71
+expect "password:" { send "Password1\r" }
+expect "$ "
+
+puts "📂 Navigating to deployment directory..."
+send "cd /volume1/docker/Artitec-Backend-API\r"
+expect "$ "
+
+puts "📥 Pulling latest changes from GitHub..."
+send "sudo git pull origin main\r"
+expect {
+    "password" {
+        send "Password1\r"
+        exp_continue
+    }
+    "Already up to date" {
+        puts "\n✅ Code is already up to date!"
+    }
+    "Updating" {
+        puts "\n📝 New changes detected, updating..."
+        exp_continue
+    }
+    "$ " {}
+}
+
+puts "\n🛑 Stopping current container..."
+send "sudo docker stop artitec-api 2>/dev/null || true\r"
+expect {
+    "password" { send "Password1\r"; exp_continue }
+    "$ " {}
+}
+
+send "sudo docker rm artitec-api 2>/dev/null || true\r"
+expect {
+    "password" { send "Password1\r"; exp_continue }
+    "$ " {}
+}
+
+puts "\n🐳 Building new Docker image (this takes 2-5 minutes)..."
+send "sudo docker build -t artitec-backend:latest .\r"
+expect {
+    "password" {
+        send "Password1\r"
+        exp_continue
+    }
+    -timeout 600 "Successfully tagged" {
+        puts "\n✅ Docker image built successfully!"
+        exp_continue
+    }
+    -timeout 600 "$ " {}
+}
+
+puts "\n🚀 Starting new container..."
+send "sudo docker run -d --name artitec-api --network host --env-file .env --restart unless-stopped -v \\$(pwd)/uploads:/app/uploads artitec-backend:latest\r"
+expect {
+    "password" { send "Password1\r"; exp_continue }
+    "$ " {}
+}
+
+puts "\n⏳ Waiting 5 seconds for container to start..."
+send "sleep 5\r"
+expect "$ "
+
+puts "\n✅ Container status:"
+send "sudo docker ps | grep artitec\r"
+expect {
+    "password" { send "Password1\r"; exp_continue }
+    "$ " {}
+}
+
+puts "\n📋 Recent logs:"
+send "sudo docker logs --tail 20 artitec-api\r"
+expect {
+    "password" { send "Password1\r"; exp_continue }
+    "$ " {}
+}
+
+send "exit\r"
+expect eof
+
+puts "\n\n✅ Deployment update complete!"
+puts "API running at: http://100.94.199.71:8000"
+puts "API Docs: http://100.94.199.71:8000/docs"
