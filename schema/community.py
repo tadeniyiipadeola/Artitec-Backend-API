@@ -265,6 +265,8 @@ class CommunityBase(BaseModel):
     community_dues: Optional[constr(strip_whitespace=True, max_length=64)] = None
     tax_rate: Optional[constr(strip_whitespace=True, max_length=32)] = None
     monthly_fee: Optional[constr(strip_whitespace=True, max_length=64)] = None
+    price_range_min: Optional[int] = None  # Minimum home price in community
+    price_range_max: Optional[int] = None  # Maximum home price in community
 
     followers: Optional[int] = 0
     about: Optional[str] = None
@@ -326,6 +328,8 @@ class CommunityUpdate(BaseModel):
     community_dues: Optional[constr(strip_whitespace=True, max_length=64)] = None
     tax_rate: Optional[constr(strip_whitespace=True, max_length=32)] = None
     monthly_fee: Optional[constr(strip_whitespace=True, max_length=64)] = None
+    price_range_min: Optional[int] = None
+    price_range_max: Optional[int] = None
 
     followers: Optional[int] = None
     about: Optional[str] = None

@@ -665,6 +665,8 @@ class CommunityCollector(BaseCollector):
 
             # Finance
             "tax_rate": "tax_rate",
+            "price_range_min": "price_range_min",
+            "price_range_max": "price_range_max",
 
             # Stats
             "total_homes": "homes",
@@ -1101,6 +1103,8 @@ class CommunityCollector(BaseCollector):
             "community_dues": community_dues,
             "monthly_fee": monthly_fee_formatted,
             "tax_rate": collected_data.get("tax_rate"),
+            "price_range_min": collected_data.get("price_range_min"),
+            "price_range_max": collected_data.get("price_range_max"),
             "school_district": collected_data.get("school_district"),
             "hoa_management_company": collected_data.get("hoa_management_company"),
             "hoa_contact_phone": collected_data.get("hoa_contact_phone"),

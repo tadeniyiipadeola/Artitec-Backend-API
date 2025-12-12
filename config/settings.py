@@ -21,3 +21,6 @@ REFRESH_TTL_DAYS = int(os.getenv("REFRESH_TTL_DAYS", 30))  # Refresh token valid
 # Application environment
 APP_ENV = os.getenv("APP_ENV", "development")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# SchoolDigger API configuration
+SCHOOLDIGGER_API_KEY = os.getenv("SCHOOLDIGGER_API_KEY", "")

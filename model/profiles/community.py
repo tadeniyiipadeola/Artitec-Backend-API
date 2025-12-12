@@ -46,6 +46,8 @@ class Community(Base):
     community_dues = Column(String(64))
     tax_rate = Column(String(32))
     monthly_fee = Column(String(64))
+    price_range_min = Column(Integer)  # Minimum home price in community
+    price_range_max = Column(Integer)  # Maximum home price in community
 
     # Header + meta
     followers = Column(Integer, default=0)

@@ -1231,8 +1231,8 @@ def _cascade_reject_community_changes(
     if community_id:
         # Find all pending builder changes where builder is in this community
         # We need to check builder_communities table to find associated builders
-        from model.profiles.builder import Builder, builder_communities
-        from model.profiles.property import Property
+        from model.profiles.builder import BuilderProfile, builder_communities
+        from model.property.property import Property
 
         # Get all builders in this community
         builder_ids = db.query(builder_communities.c.builder_id).filter(
