@@ -16,6 +16,7 @@ from routes.property import property
 from routes.admin_helpers import router as admin_router
 from routes.admin import router as admin_enterprise_router
 from routes.media import router as media_router
+from routes.schools import router as schools_router
 from fastapi.openapi.utils import get_openapi
 
 # Load environment variables from .env file
@@ -102,6 +103,7 @@ app.include_router(sales_rep.router, prefix="/v1/profiles/sales-reps", tags=["Sa
 app.include_router(admin_router, prefix="/admin", tags=["Admin Helpers"])
 app.include_router(admin_enterprise_router, prefix="/v1/admin", tags=["Enterprise"])
 app.include_router(media_router)  # Now includes /v1/media prefix and all sub-routers
+app.include_router(schools_router, prefix="/v1/schools", tags=["Schools"])
 
 
 
