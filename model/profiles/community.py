@@ -290,9 +290,6 @@ class CommunityAdminLink(Base):
     community_id = Column(MyBIGINT(unsigned=True), ForeignKey("communities.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(MyBIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    role = Column(String(64))          # e.g., "owner", "moderator", "editor"
-    is_active = Column(Boolean, default=True, nullable=False)
-
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 

@@ -10,6 +10,7 @@ from config.db import get_db
 from config.security import get_current_user_optional
 from model.user import Users
 from model.profiles.community_admin_profile import CommunityAdminProfile
+from schema.user import UserOut
 
 # --- SQLAlchemy models -------------------------------------------------------
 try:
@@ -19,6 +20,7 @@ try:
         CommunityEvent as EventModel,
         CommunityBuilder as BuilderCardModel,
         CommunityAdmin as AdminModel,
+        CommunityAdminLink as AdminLinkModel,
         CommunityAward as AwardModel,
         CommunityTopic as TopicModel,
         CommunityPhase as PhaseModel,
@@ -70,8 +72,16 @@ def _parse_include(include: Optional[str]) -> Set[str]:
 
 
 def _get_or_404(db: Session, community_id: str) -> CommunityModel:
-    """Get community by public string ID (e.g., CMY-xxx) or raise 404."""
+    """Get community by public string ID (e.g., CMY-xxx) or by name (case-insensitive)."""
+    # First try exact match by community_id
     obj = db.query(CommunityModel).filter(CommunityModel.community_id == community_id).first()
+
+    # If not found, try case-insensitive name lookup (handle URL slugs like "highlands")
+    if not obj:
+        obj = db.query(CommunityModel).filter(
+            CommunityModel.name.ilike(f"%{community_id}%")
+        ).first()
+
     if not obj:
         raise HTTPException(status_code=404, detail="Community not found")
     return obj
@@ -525,11 +535,32 @@ def delete_builder_card(*, db: Session = Depends(get_db), community_id: int, car
 
 # ------------------------------- Nested: Admins -----------------------------
 
-@router.get("/{community_id}/admins", response_model=List[CommunityAdminOut])
-def list_admins(*, db: Session = Depends(get_db), community_id: int):
-    _get_or_404(db, community_id)
-    rows = db.query(AdminModel).filter(AdminModel.community_id == community_id).all()
-    return [CommunityAdminOut.model_validate(r) for r in rows]
+@router.get("/{community_id}/admins")
+def list_admins(*, db: Session = Depends(get_db), community_id: str):
+    """Get all users with admin roles for this community via CommunityAdminLink."""
+    community = _get_or_404(db, community_id)
+
+    # Query admin links and join with users
+    admin_links = (
+        db.query(AdminLinkModel)
+        .filter(AdminLinkModel.community_id == community.id)
+        .options(selectinload(AdminLinkModel.user))
+        .all()
+    )
+
+    # Extract and return users as simple dicts
+    users = []
+    for link in admin_links:
+        if link.user:
+            users.append({
+                "id": link.user.user_id,
+                "email": link.user.email,
+                "first_name": link.user.first_name,
+                "last_name": link.user.last_name,
+                "role": link.user.role,
+            })
+
+    return users
 
 
 @router.post("/{community_id}/admins", response_model=CommunityAdminOut, status_code=status.HTTP_201_CREATED)
