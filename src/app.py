@@ -12,6 +12,7 @@ from routes.user import router as user_router
 from routes.password_reset import router as password_reset_router
 from routes.email_verification import router as email_verification_router
 from routes.profiles import buyers, builder, community, sales_rep, community_admin
+from routes.profiles.lots import router as lots_router
 from routes.property import property
 from routes.admin_helpers import router as admin_router
 from routes.admin import router as admin_enterprise_router
@@ -104,6 +105,7 @@ app.include_router(admin_router, prefix="/admin", tags=["Admin Helpers"])
 app.include_router(admin_enterprise_router, prefix="/v1/admin", tags=["Enterprise"])
 app.include_router(media_router)  # Now includes /v1/media prefix and all sub-routers
 app.include_router(schools_router, prefix="/v1/schools", tags=["Schools"])
+app.include_router(lots_router, prefix="/v1", tags=["Lots & Phases"])
 
 
 

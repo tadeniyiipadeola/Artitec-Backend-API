@@ -594,3 +594,7 @@ def get_minio_service() -> MinIOStorageService:
         public_base_url=os.getenv("S3_PUBLIC_BASE_URL"),
         secure=os.getenv("S3_SECURE", "true").lower() == "true"
     )
+
+
+# Global instance for easy importing
+storage_service = get_minio_service()

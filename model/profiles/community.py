@@ -1,6 +1,6 @@
 # model/profiles/community.py
 from sqlalchemy import (
-    Column, String, Integer, Text, Boolean, ForeignKey, TIMESTAMP, JSON, Float, UniqueConstraint
+    Column, String, Integer, Text, Boolean, ForeignKey, TIMESTAMP, Date, JSON, Float, UniqueConstraint
 )
 from sqlalchemy.dialects.mysql import BIGINT as MyBIGINT
 from sqlalchemy.orm import relationship
@@ -271,13 +271,37 @@ class CommunityPhase(Base):
     id = Column(MyBIGINT(unsigned=True), primary_key=True, autoincrement=True)
     community_numeric_id = Column(MyBIGINT(unsigned=True), nullable=True)  # Legacy numeric ID
     community_id = Column(String(50), ForeignKey("communities.community_id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Basic Info
     name = Column(String(255))
-    lots = Column(JSON)  # simplified representation; can expand to a dedicated table later
-    map_url = Column(String(1024))
+    description = Column(Text)
+
+    # Status & Timeline
+    status = Column(String(50), server_default='planning')  # planning, active, completed, on_hold
+    start_date = Column(Date)
+    target_completion_date = Column(Date)
+    actual_completion_date = Column(Date)
+
+    # Legacy lots field (deprecated - use lot_records relationship instead)
+    lots = Column(JSON)  # simplified representation; use lot_records relationship for new code
+    total_lots = Column(Integer, server_default='0')
+
+    # Phase Map / Site Plan Images
+    map_url = Column(String(1024))  # Legacy field
+    site_plan_image_url = Column(String(1024))  # MinIO URL to site plan image
+    original_file_path = Column(String(1024))  # Original uploaded file path
+    processed_image_path = Column(String(1024))  # AI-processed image path
+    file_type = Column(String(10))  # jpg, png, pdf, etc.
+    image_width = Column(Integer)
+    image_height = Column(Integer)
+
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
     updated_at = Column(
         TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False
     )
+
+    # Relationships
+    lot_records = relationship("Lot", back_populates="phase", cascade="all, delete-orphan")
 
 
 class CommunityAdminLink(Base):
