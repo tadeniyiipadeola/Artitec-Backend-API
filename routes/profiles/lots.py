@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 from decimal import Decimal
+import io
 
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Query
 from sqlalchemy.orm import Session
@@ -223,8 +224,10 @@ async def upload_phase_map(
     minio_path = f"phases/{community_id}/phase-{phase_id}-{file.filename}"
 
     try:
+        # Wrap bytes in BytesIO for storage service
+        file_obj = io.BytesIO(file_data)
         url = storage_service.upload_file(
-            file_data,
+            file_obj,
             minio_path,
             content_type=file.content_type
         )
@@ -233,7 +236,6 @@ async def upload_phase_map(
 
     # Get image dimensions
     from PIL import Image
-    import io
     try:
         img = Image.open(io.BytesIO(file_data))
         width, height = img.size
@@ -641,3 +643,202 @@ def get_phase_statistics(
     )
 
     return stats
+
+
+# ========== BATCH OPERATIONS ==========
+
+@router.post("/communities/{community_id}/phases/{phase_id}/lots/batch", response_model=BulkOperationResult, status_code=status.HTTP_201_CREATED)
+def bulk_create_lots(
+    community_id: str,
+    phase_id: int,
+    bulk_create: BulkLotCreate,
+    db: Session = Depends(get_db),
+    current_user: Users = Depends(get_current_user_optional)
+):
+    """
+    Bulk create multiple lots at once
+    """
+    phase = _get_phase_or_404(db, community_id, phase_id)
+
+    created_lots = []
+    failed_lots = []
+    errors = []
+
+    for lot_data in bulk_create.lots:
+        try:
+            # Check for duplicate lot number
+            existing = db.query(LotModel).filter(
+                LotModel.phase_id == phase_id,
+                LotModel.lot_number == lot_data.lot_number
+            ).first()
+
+            if existing:
+                failed_lots.append(lot_data.lot_number)
+                errors.append(f"Lot {lot_data.lot_number} already exists")
+                continue
+
+            # Create lot
+            new_lot = LotModel(
+                phase_id=phase_id,
+                community_id=community_id,
+                **lot_data.dict(exclude={'phase_id', 'community_id', 'boundary_coordinates'}),
+                boundary_coordinates=[coord.dict() for coord in lot_data.boundary_coordinates] if lot_data.boundary_coordinates else None
+            )
+
+            db.add(new_lot)
+            created_lots.append(new_lot)
+
+            # Create status history entry
+            history = LotStatusHistory(
+                lot_id=new_lot.id,
+                old_status=None,
+                new_status=new_lot.status,
+                changed_by=current_user.email if current_user else "system",
+                change_reason="Bulk lot creation"
+            )
+            db.add(history)
+
+        except Exception as e:
+            failed_lots.append(lot_data.lot_number)
+            errors.append(f"Lot {lot_data.lot_number}: {str(e)}")
+
+    # Update phase total_lots
+    if created_lots:
+        phase.total_lots = (phase.total_lots or 0) + len(created_lots)
+
+    db.commit()
+
+    # Refresh created lots
+    for lot in created_lots:
+        db.refresh(lot)
+
+    return BulkOperationResult(
+        success=len(created_lots),
+        failed=len(failed_lots),
+        total=len(bulk_create.lots),
+        created_ids=[lot.id for lot in created_lots],
+        errors=errors if errors else None,
+        message=f"Created {len(created_lots)} lots, {len(failed_lots)} failed"
+    )
+
+
+@router.patch("/communities/{community_id}/phases/{phase_id}/lots/batch/status", response_model=BulkOperationResult)
+def bulk_update_lot_status(
+    community_id: str,
+    phase_id: int,
+    bulk_update: BulkLotStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: Users = Depends(get_current_user_optional)
+):
+    """
+    Bulk update status for multiple lots
+    """
+    _get_phase_or_404(db, community_id, phase_id)
+
+    updated_lots = []
+    failed_lots = []
+    errors = []
+
+    for lot_id in bulk_update.lot_ids:
+        try:
+            lot = db.query(LotModel).filter(
+                LotModel.id == lot_id,
+                LotModel.phase_id == phase_id
+            ).first()
+
+            if not lot:
+                failed_lots.append(lot_id)
+                errors.append(f"Lot ID {lot_id} not found")
+                continue
+
+            old_status = lot.status
+
+            # Update status
+            lot.status = bulk_update.new_status
+
+            # Update reservation/sale info based on status
+            if bulk_update.new_status == LotStatus.RESERVED:
+                lot.reserved_by = bulk_update.reserved_by
+                lot.reserved_at = func.now()
+            elif bulk_update.new_status == LotStatus.SOLD:
+                lot.sold_to = bulk_update.sold_to
+                lot.sold_at = func.now()
+
+            # Create status history entry
+            history = LotStatusHistory(
+                lot_id=lot.id,
+                old_status=old_status,
+                new_status=bulk_update.new_status,
+                changed_by=bulk_update.changed_by or (current_user.email if current_user else "system"),
+                change_reason=bulk_update.change_reason or "Bulk status update"
+            )
+            db.add(history)
+
+            updated_lots.append(lot.id)
+
+        except Exception as e:
+            failed_lots.append(lot_id)
+            errors.append(f"Lot ID {lot_id}: {str(e)}")
+
+    db.commit()
+
+    return BulkOperationResult(
+        success=len(updated_lots),
+        failed=len(failed_lots),
+        total=len(bulk_update.lot_ids),
+        updated_ids=updated_lots,
+        errors=errors if errors else None,
+        message=f"Updated {len(updated_lots)} lots to {bulk_update.new_status.value}, {len(failed_lots)} failed"
+    )
+
+
+@router.delete("/communities/{community_id}/phases/{phase_id}/lots/batch", response_model=BulkOperationResult)
+def bulk_delete_lots(
+    community_id: str,
+    phase_id: int,
+    lot_ids: List[int] = Query(..., description="List of lot IDs to delete"),
+    db: Session = Depends(get_db),
+    current_user: Users = Depends(get_current_user_optional)
+):
+    """
+    Bulk delete multiple lots
+    """
+    phase = _get_phase_or_404(db, community_id, phase_id)
+
+    deleted_lots = []
+    failed_lots = []
+    errors = []
+
+    for lot_id in lot_ids:
+        try:
+            lot = db.query(LotModel).filter(
+                LotModel.id == lot_id,
+                LotModel.phase_id == phase_id
+            ).first()
+
+            if not lot:
+                failed_lots.append(lot_id)
+                errors.append(f"Lot ID {lot_id} not found")
+                continue
+
+            db.delete(lot)
+            deleted_lots.append(lot_id)
+
+        except Exception as e:
+            failed_lots.append(lot_id)
+            errors.append(f"Lot ID {lot_id}: {str(e)}")
+
+    # Update phase total_lots
+    if deleted_lots:
+        phase.total_lots = max(0, (phase.total_lots or 0) - len(deleted_lots))
+
+    db.commit()
+
+    return BulkOperationResult(
+        success=len(deleted_lots),
+        failed=len(failed_lots),
+        total=len(lot_ids),
+        deleted_ids=deleted_lots,
+        errors=errors if errors else None,
+        message=f"Deleted {len(deleted_lots)} lots, {len(failed_lots)} failed"
+    )

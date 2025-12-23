@@ -18,6 +18,9 @@ from routes.admin_helpers import router as admin_router
 from routes.admin import router as admin_enterprise_router
 from routes.media import router as media_router
 from routes.schools import router as schools_router
+from routes.ml_detection import router as ml_detection_router
+from routes.phase_maps import router as phase_maps_router
+from routes.ml_training import router as ml_training_router
 from fastapi.openapi.utils import get_openapi
 
 # Load environment variables from .env file
@@ -106,6 +109,9 @@ app.include_router(admin_enterprise_router, prefix="/v1/admin", tags=["Enterpris
 app.include_router(media_router)  # Now includes /v1/media prefix and all sub-routers
 app.include_router(schools_router, prefix="/v1/schools", tags=["Schools"])
 app.include_router(lots_router, prefix="/v1", tags=["Lots & Phases"])
+app.include_router(ml_detection_router, prefix="/v1", tags=["ML Detection"])
+app.include_router(phase_maps_router, prefix="/v1/phase-maps", tags=["Phase Maps & ML Detection"])
+app.include_router(ml_training_router, prefix="/v1/ml", tags=["ML Training & Feedback"])
 
 
 

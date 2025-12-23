@@ -884,3 +884,42 @@ def delete_builder_credential(
     db.delete(obj)
     db.commit()
     return None
+
+
+# ============================================================================
+# Builder Lots Endpoints
+# ============================================================================
+
+@router.get("/by-id/{builder_id}/lots")
+def get_builder_lots(
+    *,
+    db: Session = Depends(get_db),
+    builder_id: str,
+):
+    """Get all lots assigned to a specific builder across all communities and phases"""
+    from model.profiles.lot import Lot as LotModel, LotStatus
+    from schema.lots import LotOut
+
+    # Verify builder exists
+    builder = db.query(BuilderModel).filter(BuilderModel.builder_id == builder_id).first()
+    if not builder:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Builder not found")
+
+    # Get all lots for this builder
+    lots = db.query(LotModel).filter(LotModel.builder_id == builder_id).order_by(LotModel.lot_number).all()
+
+    # Calculate statistics
+    stats = {
+        'total': len(lots),
+        'available': sum(1 for lot in lots if lot.status == LotStatus.AVAILABLE),
+        'reserved': sum(1 for lot in lots if lot.status == LotStatus.RESERVED),
+        'sold': sum(1 for lot in lots if lot.status == LotStatus.SOLD),
+        'unavailable': sum(1 for lot in lots if lot.status == LotStatus.UNAVAILABLE),
+        'on_hold': sum(1 for lot in lots if lot.status == LotStatus.ON_HOLD),
+    }
+
+    return {
+        "items": [LotOut.model_validate(lot) for lot in lots],
+        "total": len(lots),
+        "statistics": stats
+    }
